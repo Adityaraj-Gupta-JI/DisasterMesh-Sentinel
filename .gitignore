@@ -1,0 +1,45 @@
+# Secrets
+.env
+.env.local
+*.pem
+*.jks
+*.keystore
+local.properties
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Android / Gradle
+.gradle/
+build/
+android-app/build/
+android-app/**/build/
+captures/
+*.apk
+*.aab
+
+# Databases and runtime artifacts
+*.db
+*.sqlite
+*.sqlite3
+runtime/
+attachments/
+simulation-output/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
