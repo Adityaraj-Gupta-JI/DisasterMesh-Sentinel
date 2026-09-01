@@ -59,6 +59,9 @@ fun ReporterHomeScreen(
     onStartVoiceReport: () -> Unit,
     onOpenReport: (String) -> Unit,
     modifier: Modifier = Modifier,
+    // Additive: defaults to onStartReport so any existing caller keeps compiling,
+    // but the real SOS action should send immediately rather than open a form.
+    onSendSos: () -> Unit = onStartReport,
 ) {
     Column(
         modifier
@@ -79,7 +82,7 @@ fun ReporterHomeScreen(
         // The emergency action is the largest thing on the screen and reachable
         // with one thumb.
         Button(
-            onClick = onStartReport,
+            onClick = onSendSos,
             modifier = Modifier.fillMaxWidth().height(Spacing.emergencyButton),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.error,

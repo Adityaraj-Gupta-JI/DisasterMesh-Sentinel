@@ -1,4 +1,4 @@
-# Secrets
+# Secrets & Environment Configuration
 .env
 .env.local
 *.pem
@@ -11,19 +11,25 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+ENV/
+env/
 .pytest_cache/
+.pytest_temp/
 .ruff_cache/
 .mypy_cache/
 *.egg-info/
 
-# Node
+# Node & Frontend Build
 node_modules/
+dashboard/node_modules/
 dist/
+dashboard/dist/
 .vite/
 *.tsbuildinfo
 
-# Android / Gradle
+# Android & Gradle Build
 .gradle/
+android-app/.gradle/
 build/
 android-app/build/
 android-app/**/build/
@@ -31,15 +37,19 @@ captures/
 *.apk
 *.aab
 
-# Databases and runtime artifacts
+# Databases & Runtime Artifacts
 *.db
 *.sqlite
 *.sqlite3
 runtime/
 attachments/
 simulation-output/
+*.log
 
-# Editors / OS
+# Editors, Tooling & IDEs
 .idea/
 .vscode/
+.antigravity/
+.gemini/
 .DS_Store
+Thumbs.db

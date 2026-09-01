@@ -241,6 +241,7 @@ class AppViewModel(
     fun updateServerUrl(url: String) {
         _serverUrl.value = url
         repository.gatewayClient.baseUrl = url
+        repository.persistGatewayUrl(url)
         viewModelScope.launch {
             val ok = repository.checkConnection()
             _statusMessage.value = if (ok) "Connected to Gateway ($url)" else "Gateway unreachable ($url)"

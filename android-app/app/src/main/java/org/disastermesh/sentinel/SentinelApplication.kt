@@ -22,7 +22,18 @@ class SentinelApplication : Application() {
         super.onCreate()
         database = Room.databaseBuilder(this, SentinelDatabase::class.java, "sentinel.db")
             .build()
-        repository = org.disastermesh.sentinel.data.SentinelRepository(database, this)
+
+        val savedUrl = getSharedPreferences(
+            org.disastermesh.sentinel.data.SentinelRepository.PREFS_NAME,
+            MODE_PRIVATE,
+        ).getString(org.disastermesh.sentinel.data.SentinelRepository.KEY_GATEWAY_URL, null)
+        val gatewayClient = if (savedUrl != null) {
+            org.disastermesh.sentinel.sync.GatewayClient(baseUrl = savedUrl)
+        } else {
+            org.disastermesh.sentinel.sync.GatewayClient()
+        }
+
+        repository = org.disastermesh.sentinel.data.SentinelRepository(database, this, gatewayClient)
     }
 }
 

@@ -102,28 +102,6 @@ fun CoordinatorInboxScreen(
                                     incident.status.name.lowercase().replace('_', ' '),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
-                            // Feature: Image Transfer — render the actual photo evidence,
-                            // not a placeholder box, when a content URL is available.
-                            if (imageUrlFor != null) {
-                                incident.attachmentIds.forEach { attId ->
-                                    coil.compose.AsyncImage(
-                                        model = coil.request.ImageRequest.Builder(LocalContext.current)
-                                            .data(imageUrlFor(attId))
-                                            .apply {
-                                                if (authHeader != null) {
-                                                    addHeader("Authorization", authHeader)
-                                                }
-                                            }
-                                            .crossfade(true)
-                                            .build(),
-                                        contentDescription = "Photo evidence",
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .heightIn(max = 260.dp)
-                                            .padding(top = Spacing.xs),
-                                    )
-                                }
-                            }
                         }
                     }
                 }

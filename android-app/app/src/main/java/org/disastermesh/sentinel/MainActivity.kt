@@ -241,6 +241,7 @@ private fun SentinelApp(
                     Tab.REPORT -> ReporterHomeScreen(
                         state = reporterState,
                         onStartReport = { viewModel.navigateTo(AppScreen.NEW_REPORT) },
+                        onSendSos = { viewModel.sendSos() },
                         onStartVoiceReport = {
                             viewModel.submitReport(
                                 text = "Voice memo incident report (auto-transcribed)",

@@ -91,6 +91,13 @@ class NearbyConnectionsTransport(
     // ------------------------------------------------------------- connections
 
     override fun requestConnection(endpointId: String, timeoutMillis: Long) {
+        // Discovery re-announces endpoints periodically even while already linked;
+        // re-requesting on top of a live or in-flight connection is what causes the
+        // Nearby stack to flap a good link, so this is a no-op once past DISCOVERED.
+        when (states[endpointId]) {
+            ConnectionState.CONNECTED, ConnectionState.REQUESTED -> return
+            else -> {}
+        }
         states[endpointId] = ConnectionState.REQUESTED
         client.requestConnection(nodeId, endpointId, connectionLifecycle)
             .addOnFailureListener { error ->
@@ -168,7 +175,13 @@ class NearbyConnectionsTransport(
         }
 
         override fun onEndpointLost(endpointId: String) {
-            states[endpointId] = ConnectionState.DISCONNECTED
+            // This fires when the BLE advertisement is no longer heard, which is
+            // routine once two devices are actively connected (radios busy moving
+            // data instead of beaconing). It is not a disconnect — onDisconnected
+            // is — so an already-CONNECTED link must not be downgraded here.
+            if (states[endpointId] != ConnectionState.CONNECTED) {
+                states[endpointId] = ConnectionState.DISCONNECTED
+            }
             emit(TransportEvent.PeerLost(endpointId))
         }
     }
