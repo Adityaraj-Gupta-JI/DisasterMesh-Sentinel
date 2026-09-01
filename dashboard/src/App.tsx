@@ -14,8 +14,8 @@ import { BootSequence } from "./components/BootSequence";
 import { ComposePanel } from "./components/ComposePanel";
 import { IncidentDetailPanel } from "./components/IncidentDetail";
 import { IncidentQueue } from "./components/IncidentQueue";
-import { MeshSimulation } from "./components/MeshSimulation";
 import { MeshView } from "./components/MeshView";
+import { PixelSpiderman } from "./components/PixelSpiderman";
 import { useIncidentSocket } from "./hooks/useIncidentSocket";
 import { useLocalStorageState } from "./hooks/useLocalStorageState";
 import { ApiError, api, relativeTime, type PriorityClass } from "./lib/api";
@@ -24,7 +24,7 @@ const StormBackground = lazy(() =>
   import("./components/StormBackground").then((m) => ({ default: m.StormBackground })),
 );
 
-const REFRESH_MS = 20000;
+const REFRESH_MS = 3000;
 
 function HudTile({
   label,
@@ -53,7 +53,7 @@ function HudTile({
   );
 }
 
-function CommandInbox() {
+export default function App() {
   const [filter, setFilter] = useState<PriorityClass | "ALL">("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showNodesModal, setShowNodesModal] = useState(false);
@@ -153,6 +153,8 @@ function CommandInbox() {
       <Suspense fallback={null}>
         <StormBackground enabled={stormEnabled} />
       </Suspense>
+      <PixelSpiderman />
+      <div className="pixel-grass" aria-hidden="true" />
 
       {/* ── LEFT COMMAND RAIL ── */}
       <aside className="command-rail">

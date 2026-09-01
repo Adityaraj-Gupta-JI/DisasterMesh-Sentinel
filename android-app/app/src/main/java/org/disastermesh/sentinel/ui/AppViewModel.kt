@@ -231,17 +231,15 @@ class AppViewModel(
     fun sendSos() {
         viewModelScope.launch {
             val incident = repository.createReport(
-                text = "EMERGENCY SOS: Life threat reported. Immediate assistance needed.",
-                disasterTypes = listOf(DisasterType.MEDICAL, DisasterType.TRAPPED_PERSON),
+                text = "EMERGENCY SOS — Immediate assistance requested",
                 urgency = Urgency.CRITICAL,
-                severity = 95,
-                peopleAffected = Quantity(value = 1, approximate = false),
-                conditions = listOf(Condition(type = org.disastermesh.sentinel.domain.ConditionType.NOT_BREATHING)),
+                severity = 90,
                 location = GeoPoint(37.7749, -122.4194, 5.0, true),
                 sharePrecisely = true,
             )
             _lastSubmittedIncident.value = incident
             _currentScreen.value = AppScreen.CONFIRMATION
+            repository.syncWithGateway()
         }
     }
 
@@ -276,6 +274,7 @@ class AppViewModel(
                     photoMimeType ?: "image/jpeg",
                 )
             }
+            repository.syncWithGateway()
         }
     }
 
@@ -287,10 +286,7 @@ class AppViewModel(
     fun uploadPhotoForLastIncident(bytes: ByteArray, fileName: String, mimeType: String) {
         val incident = _lastSubmittedIncident.value ?: return
         viewModelScope.launch {
-            // If online, ensure incident is submitted to gateway before attaching
-            if (repository.isOnline.value) {
-                repository.gatewayClient.submitIncident(incident)
-            }
+            repository.gatewayClient.submitIncident(incident)
             val result = repository.gatewayClient.uploadImageAttachment(
                 incident.id, bytes, fileName, mimeType,
             )
@@ -306,6 +302,7 @@ class AppViewModel(
             } else {
                 _statusMessage.value = "Photo will sync when online"
             }
+            repository.syncWithGateway()
         }
     }
 
@@ -373,6 +370,9 @@ class AppViewModel(
         repository.persistGatewayUrl(url)
         viewModelScope.launch {
             val ok = repository.checkConnection()
+            if (ok) {
+                repository.syncWithGateway()
+            }
             _statusMessage.value = if (ok) "Connected to Gateway ($url)" else "Gateway unreachable ($url)"
         }
     }

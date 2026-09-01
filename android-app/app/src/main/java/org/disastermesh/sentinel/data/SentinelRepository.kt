@@ -77,11 +77,11 @@ class SentinelRepository(
 
     init {
         refreshTelemetry()
-        // Periodic gateway health & heartbeat probe
+        // Periodic gateway health & heartbeat probe & sync
         scope.launch {
             while (true) {
                 checkConnection()
-                kotlinx.coroutines.delay(10_000)
+                kotlinx.coroutines.delay(4_000)
             }
         }
     }
@@ -120,9 +120,8 @@ class SentinelRepository(
                 nearbyPeers = _nearbyPeersCount.value,
                 storedBundles = bundleCount,
             )
-            // The 10s poll above stays as the fallback either way — a dropped
-            // socket degrades sync to "a bit slower," never silent. Only open
-            // a new one when the previous one (if any) is actually gone.
+            // Synchronize queued & remote incidents proactively
+            scope.launch { syncWithGateway() }
             if (realtimeSocket == null) {
                 realtimeSocket = gatewayClient.connectRealtime(
                     onEvent = { scope.launch { syncWithGateway() } },
@@ -214,15 +213,15 @@ class SentinelRepository(
         )
         database.bundles().insert(bundleEntity)
 
-        // 3. Attempt direct Gateway sync if online
+        // 3. Attempt direct Gateway sync
         scope.launch {
-            if (_isOnline.value) {
+            try {
                 val res = gatewayClient.submitIncident(incident)
                 if (res.isSuccess) {
                     val updated = incident.copy(status = IncidentStatus.RECEIVED)
                     database.incidents().upsert(updated.toEntity())
                 }
-            }
+            } catch (_: Exception) {}
         }
 
         // 4. If mesh transport is active, broadcast to nearby peers
