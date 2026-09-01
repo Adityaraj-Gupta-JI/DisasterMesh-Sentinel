@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use or reference DisasterMesh Sentinel, please cite this repository."
+type: software
+title: "DisasterMesh Sentinel"
+abstract: "An AI-powered self-organizing emergency communication network for resilient communication during connectivity failures."
+version: "0.1.0"
+date-released: "2026-09-01"
+repository-code: "https://github.com/Adityaraj-Gupta-JI/DisasterMesh-Sentinel"
+license: "LicenseRef-Proprietary-All-Rights-Reserved"
+authors:
+  - family-names: "[Chaudhary]"
+    given-names: "[Chetan]"
+    affiliation: "[Vellore Institute of Technology, Chennai, India]"
+  - family-names: "[Upadhyay]"
+    given-names: "[Om]"
+    affiliation: "[Vellore Institute of Technology, Chennai, India]"
+  - family-names: "[Singh]"
+    given-names: "[Divyanshu]"
+    affiliation: "[Vellore Institute of Technology, Chennai, India]"
+  - family-names: "[Gupta]"
+    given-names: "[Adityaraj]"
+    affiliation: "[Vellore Institute of Technology, Chennai, India]"
+keywords:
+  - emergency communication
+  - offline-first
+  - peer-to-peer networking
+  - disaster response
+  - AI triage
+  - store-and-forward routing
+  - resilient systems
