@@ -50,11 +50,17 @@ export function ActionPanel({
           ) : (
             <div style={{ display: "flex", flexDirection: "column" }}>
               {recommendations.map((option) => (
-                <div className="recommendation" key={option.resource_id}>
-                  <div className="kind-tag">{option.kind.replace(/_/g, " ")}</div>
+                <div className="recommendation tech-corners" key={option.resource_id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                    <div className="kind-tag">{option.kind.replace(/_/g, " ")}</div>
+                    <span className="badge outline" style={{ fontSize: "9px", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
+                      MATCH {(option.score * 100).toFixed(0)}%
+                    </span>
+                  </div>
                   <strong>{option.label}</strong>
                   <p className="reason">{option.reason}</p>
                   <button
+                    className="tactile-btn"
                     onClick={() => setPending(option)}
                     disabled={busy || !acknowledged}
                   >

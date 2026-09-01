@@ -1,10 +1,19 @@
 /** Incident detail: hero-first layout. Text dominant, metadata compact, AI separated. */
+import { lazy, Suspense } from "react";
+
 import { usePrefersReducedMotion } from "../hooks/useLocalStorageState";
 import type { IncidentDetail as Detail } from "../lib/api";
 import { peopleLabel, relativeTime } from "../lib/api";
 import { AttachmentMedia } from "./AttachmentMedia";
 import { LanguageBadge, PriorityBadge, StatusBadge, VerificationBadge } from "./Badges";
 import { CoordinatorNotes } from "./CoordinatorNotes";
+
+// maplibre-gl is ~1MB — this is emergency-response software where the queue
+// and incident detail must render instantly, so the map (same reasoning as
+// the storm background) is code-split and never blocks first paint.
+const LocationMap = lazy(() =>
+  import("./LocationMap").then((m) => ({ default: m.LocationMap })),
+);
 
 export function IncidentDetailPanel({
   detail,
@@ -71,10 +80,18 @@ export function IncidentDetailPanel({
         </div>
       </dl>
 
+      {/* Location map — the phone's real coordinates, plotted */}
+      <Suspense fallback={<section className="section"><h3>Location</h3><p className="empty">Loading map…</p></section>}>
+        <LocationMap location={incident.location} />
+      </Suspense>
+
       {/* AI Incident Intelligence */}
       <section className="section">
         <h3>AI Incident Intelligence</h3>
-        <div className="ai-panel">
+        <div className="ai-panel tech-corners">
+          <span className="badge-edge-overlap badge ai" style={{ fontSize: "10px", padding: "2px 8px" }}>
+            AI TRIAGE · SYSTEM 1.2
+          </span>
           <div className="ai-panel-head">
             <span className="status-dot" aria-hidden="true" />
             Classifier Active · System Suggestion

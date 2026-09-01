@@ -129,13 +129,30 @@ export function CoordinatorNotes({
       {notes.length === 0 && !showDraft && <p className="empty">No follow-up notes yet.</p>}
 
       {notes.length > 0 && (
-        <div className="evidence" style={{ marginBottom: "var(--space-3)" }}>
-          {notes.map((note) => (
-            <div key={note.id} className="evidence-row" style={{ alignItems: "flex-start", flexDirection: "column" }}>
-              <p style={{ margin: 0 }}>{note.text}</p>
+        <div className="evidence" style={{ marginBottom: "var(--s3)" }}>
+          {notes.map((note, idx) => (
+            <div
+              key={note.id}
+              className="note-card tech-corners"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "4px",
+                transform: idx % 2 === 0 ? "rotate(-0.35deg)" : "rotate(0.3deg)",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: "9px", color: "var(--text-micro)", letterSpacing: "0.08em" }}>
+                  #LOG-{String(idx + 1).padStart(2, "0")}
+                </span>
+                <span className="badge outline" style={{ fontSize: "9px", padding: "1px 6px", fontFamily: "var(--font-mono)" }}>
+                  {note.source === "voice" ? "🎙 VOICE LOG" : "⌨ TYPED LOG"}
+                </span>
+              </div>
+              <p style={{ margin: "4px 0 0", fontSize: "12.5px", lineHeight: "1.4" }}>{note.text}</p>
               <p className="simulated-note" style={{ marginTop: "4px" }}>
-                {note.source === "voice" ? "🎤 voice" : "typed"} · {relativeTime(note.created_at)}
-                {note.audio_attachment_id && " · original audio in Evidence"}
+                {relativeTime(note.created_at)}
+                {note.audio_attachment_id && " · raw audio stored"}
               </p>
             </div>
           ))}
@@ -145,13 +162,13 @@ export function CoordinatorNotes({
       {!showDraft ? (
         <div style={{ display: "flex", gap: "8px" }}>
           {!recording ? (
-            <button onClick={start}>🎤 Record note</button>
+            <button className="tactile-btn" onClick={start}>🎤 Record note</button>
           ) : (
-            <button onClick={stop} className="recording">
+            <button onClick={stop} className="recording tactile-btn">
               ■ Stop recording
             </button>
           )}
-          <button onClick={startText}>+ Type a note</button>
+          <button className="tactile-btn" onClick={startText}>+ Type a note</button>
         </div>
       ) : (
         <div>
