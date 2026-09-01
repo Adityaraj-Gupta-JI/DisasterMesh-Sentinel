@@ -1,0 +1,28 @@
+# Lint configuration.
+#
+# The only silenced rule is E402 in the two service entry points, where sys.path must
+# be extended to reach the shared `protocol` package before its modules are imported.
+# That is a real constraint, not a style preference, so it is scoped to those files
+# rather than disabled globally.
+
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # long lines are caught by the formatter, not the linter
+    "B008",  # FastAPI dependencies are function calls in defaults by design
+]
+
+[lint.per-file-ignores]
+"backend/app/main.py" = ["E402"]
+"ai-service/app/main.py" = ["E402"]
+"scripts/*.py" = ["E402"]
+"protocol/conftest.py" = ["E402"]
+"backend/tests/conftest.py" = ["E402"]
+"ai-service/tests/*.py" = ["E402"]
+"protocol/tests/*.py" = ["B011"]  # asserts are the point of a test
+
+[format]
+quote-style = "double"

@@ -1,0 +1,209 @@
+{
+  "seed": 20260831,
+  "scenarios": [
+    {
+      "name": "1_critical_relay",
+      "description": "A -> B -> C critical relay",
+      "delivered": 1,
+      "expected": 1,
+      "p0_delivery_seconds": 30.0,
+      "p1_delivery_seconds": null,
+      "bundles_transferred": 32,
+      "duplicate_bundles_suppressed": 0,
+      "replication_overhead": 0.0,
+      "file_completion_ratio": 0.0,
+      "battery_cost_estimate": 3.091,
+      "acknowledgement_latency_seconds": 15.0,
+      "unauthorized_rejections": 0,
+      "notes": [
+        "relay could read payloads: False"
+      ],
+      "delivery_ratio": 1.0
+    },
+    {
+      "name": "2_intermittent",
+      "description": "Link drops mid-transfer, then returns",
+      "delivered": 1,
+      "expected": 1,
+      "p0_delivery_seconds": null,
+      "p1_delivery_seconds": null,
+      "bundles_transferred": 55,
+      "duplicate_bundles_suppressed": 0,
+      "replication_overhead": 0.0,
+      "file_completion_ratio": 1.0,
+      "battery_cost_estimate": 11.792,
+      "acknowledgement_latency_seconds": null,
+      "unauthorized_rejections": 0,
+      "notes": [
+        "bundles at B after the drop: 0"
+      ],
+      "delivery_ratio": 1.0
+    },
+    {
+      "name": "3_p0_vs_large_p3",
+      "description": "P0 text competes with a large P3 file",
+      "delivered": 1,
+      "expected": 1,
+      "p0_delivery_seconds": null,
+      "p1_delivery_seconds": null,
+      "bundles_transferred": 72,
+      "duplicate_bundles_suppressed": 0,
+      "replication_overhead": 0.0,
+      "file_completion_ratio": 0.0,
+      "battery_cost_estimate": 33.916,
+      "acknowledgement_latency_seconds": null,
+      "unauthorized_rejections": 0,
+      "notes": [
+        "P0 text arrived at position 0 of 34",
+        "first P3 media chunk at position 3",
+        "P0 text preceded bulk media: True"
+      ],
+      "delivery_ratio": 1.0
+    },
+    {
+      "name": "4_late_gateway",
+      "description": "Gateway appears after 10 minutes",
+      "delivered": 1,
+      "expected": 1,
+      "p0_delivery_seconds": 600.0,
+      "p1_delivery_seconds": null,
+      "bundles_transferred": 32,
+      "duplicate_bundles_suppressed": 0,
+      "replication_overhead": 0.0,
+      "file_completion_ratio": 0.0,
+      "battery_cost_estimate": 3.091,
+      "acknowledgement_latency_seconds": null,
+      "unauthorized_rejections": 0,
+      "notes": [
+        "report survived 10 minutes with no coordinator in range"
+      ],
+      "delivery_ratio": 1.0
+    },
+    {
+      "name": "5_duplicate_reports",
+      "description": "Two reports of one event cluster",
+      "delivered": 2,
+      "expected": 2,
+      "p0_delivery_seconds": null,
+      "p1_delivery_seconds": null,
+      "bundles_transferred": 18,
+      "duplicate_bundles_suppressed": 1,
+      "replication_overhead": 0.0,
+      "file_completion_ratio": 0.0,
+      "battery_cost_estimate": 1.572,
+      "acknowledgement_latency_seconds": null,
+      "unauthorized_rejections": 0,
+      "notes": [
+        "cluster decision MERGE at similarity 0.81",
+        "provisional=True human_reviewed=False"
+      ],
+      "delivery_ratio": 1.0
+    },
+    {
+      "name": "6_unauthorized",
+      "description": "Unauthorized node requests medical content",
+      "delivered": 0,
+      "expected": 0,
+      "p0_delivery_seconds": null,
+      "p1_delivery_seconds": null,
+      "bundles_transferred": 0,
+      "duplicate_bundles_suppressed": 0,
+      "replication_overhead": 0.0,
+      "file_completion_ratio": 0.0,
+      "battery_cost_estimate": 0.0,
+      "acknowledgement_latency_seconds": null,
+      "unauthorized_rejections": 2,
+      "notes": [
+        "CITIZEN_REPORTER: 0 offered, 1 refused",
+        "FLOOD_RESPONDER: 0 offered, 1 refused"
+      ],
+      "delivery_ratio": 0.0
+    },
+    {
+      "name": "7_low_battery",
+      "description": "Relay battery below threshold",
+      "delivered": 1,
+      "expected": 1,
+      "p0_delivery_seconds": null,
+      "p1_delivery_seconds": null,
+      "bundles_transferred": 34,
+      "duplicate_bundles_suppressed": 0,
+      "replication_overhead": 0.0,
+      "file_completion_ratio": 0.0,
+      "battery_cost_estimate": 3.115,
+      "acknowledgement_latency_seconds": null,
+      "unauthorized_rejections": 0,
+      "notes": [
+        "P0 delivered at 5% battery: True",
+        "P3 deferred at 5% battery: True"
+      ],
+      "delivery_ratio": 1.0
+    },
+    {
+      "name": "8_file_interruption",
+      "description": "Attachment transfer interrupted then resumed",
+      "delivered": 1,
+      "expected": 1,
+      "p0_delivery_seconds": null,
+      "p1_delivery_seconds": null,
+      "bundles_transferred": 30,
+      "duplicate_bundles_suppressed": 0,
+      "replication_overhead": 0.0,
+      "file_completion_ratio": 1.0,
+      "battery_cost_estimate": 6.657,
+      "acknowledgement_latency_seconds": null,
+      "unauthorized_rejections": 0,
+      "notes": [
+        "committed before interruption: 0; after resume: 1",
+        "digest verified on commit: b08579866608"
+      ],
+      "delivery_ratio": 1.0
+    },
+    {
+      "name": "9_ai_unavailable",
+      "description": "AI service unavailable",
+      "delivered": 1,
+      "expected": 1,
+      "p0_delivery_seconds": null,
+      "p1_delivery_seconds": null,
+      "bundles_transferred": 16,
+      "duplicate_bundles_suppressed": 0,
+      "replication_overhead": 0.0,
+      "file_completion_ratio": 0.0,
+      "battery_cost_estimate": 1.546,
+      "acknowledgement_latency_seconds": null,
+      "unauthorized_rejections": 0,
+      "notes": [
+        "priority without AI: P0",
+        "original text preserved: True"
+      ],
+      "delivery_ratio": 1.0
+    },
+    {
+      "name": "10_conflicting",
+      "description": "Conflicting counts for one event",
+      "delivered": 2,
+      "expected": 2,
+      "p0_delivery_seconds": null,
+      "p1_delivery_seconds": null,
+      "bundles_transferred": 18,
+      "duplicate_bundles_suppressed": 0,
+      "replication_overhead": 0.0,
+      "file_completion_ratio": 0.0,
+      "battery_cost_estimate": 1.571,
+      "acknowledgement_latency_seconds": null,
+      "unauthorized_rejections": 0,
+      "notes": [
+        "estimated affected: 12",
+        "reports disagree on people affected: [3, 9]"
+      ],
+      "delivery_ratio": 1.0
+    }
+  ],
+  "totals": {
+    "scenarios": 10,
+    "delivered": 11,
+    "expected": 11,
+    "bundles_transferred": 307
+  }
+}

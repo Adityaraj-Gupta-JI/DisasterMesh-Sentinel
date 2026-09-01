@@ -1,0 +1,55 @@
+{
+  "id": "inc_64401c0036ba4e75",
+  "source_node_id": "A",
+  "organization_id": "org_demo",
+  "original_text": "Water rising fast near the river bridge, families on rooftops",
+  "source_language": "en",
+  "location": null,
+  "reported_at": "2026-01-01T00:00:00+00:00",
+  "expires_at": "2026-01-01T12:00:00+00:00",
+  "disaster_types": [
+    "FLOOD"
+  ],
+  "urgency": "CRITICAL",
+  "severity": 70,
+  "classification_confidence": 0.65,
+  "people_affected": {
+    "value": null,
+    "raw": null,
+    "approximate": true,
+    "confidence": 0.0
+  },
+  "conditions": [],
+  "requested_resources": [
+    "SUPPLY_TRUCK"
+  ],
+  "priority_score": 74,
+  "priority_class": "P1",
+  "priority_explanation": [
+    "urgency CRITICAL → base 60",
+    "severity 70 → +14",
+    "people affected unknown → no adjustment (never guessed)"
+  ],
+  "policy_version": "policy-1.0.0",
+  "status": "QUEUED",
+  "verification_status": "AI_CLASSIFIED",
+  "access_policy": {
+    "sensitivity": "OPERATIONAL",
+    "allowed_roles": [],
+    "organization_id": "org_demo",
+    "precise_location_roles": [
+      "EVENT_COORDINATOR",
+      "MEDICAL_RESPONDER",
+      "FLOOD_RESPONDER",
+      "GOVERNMENT_AUTHORITY"
+    ]
+  },
+  "attachment_ids": [],
+  "audio_reference": null,
+  "cluster_id": null,
+  "provenance": "HUMAN_REPORTED",
+  "revision": 1,
+  "schema_version": "1.0.0",
+  "created_at": "2026-01-01T00:00:00+00:00",
+  "updated_at": "2026-01-01T00:00:00+00:00"
+}

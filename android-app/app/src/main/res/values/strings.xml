@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DisasterMesh Sentinel</string>
+
+    <!-- Reporter: plain language, no jargon. -->
+    <string name="send_sos">SEND SOS</string>
+    <string name="report_incident">Report incident</string>
+    <string name="voice_report">Voice</string>
+    <string name="what_happened">What is happening?</string>
+    <string name="queued_offline">Saved on this phone. It will send when a device is near.</string>
+    <string name="relayed">Passed to a nearby device.</string>
+    <string name="acknowledged">A coordinator has seen your report.</string>
+    <string name="ai_unavailable">Automatic analysis is unavailable. Your report was still sent.</string>
+
+    <!-- Relay: explains what the device is storing and why. -->
+    <string name="relay_mode">Relay mode</string>
+    <string name="relay_explainer">Your phone can carry encrypted emergency reports for
+        others and pass them on. You cannot read what you carry.</string>
+    <string name="relay_pause">Pause relaying</string>
+    <string name="relay_resume">Resume relaying</string>
+
+    <!-- Coordinator -->
+    <string name="command_inbox">Command inbox</string>
+    <string name="acknowledge">Acknowledge</string>
+    <string name="dispatch_confirm">Confirm simulated dispatch</string>
+    <string name="ai_suggestion">AI suggestion — a human decides</string>
+    <string name="simulated_notice">Simulated dispatch. No real emergency service is contacted.</string>
+</resources>
