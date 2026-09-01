@@ -57,6 +57,7 @@ class FileManifest:
     sha256: str = ""
     chunk_bytes: int = DEFAULT_CHUNK_BYTES
     chunk_count: int = 0
+    chunk_bundle_ids: tuple[str, ...] = ()
     available_ranges: tuple[tuple[int, int], ...] = ()
     priority_class: PriorityClass = PriorityClass.P2
     expires_at: datetime | None = None
@@ -84,6 +85,8 @@ class FileManifest:
             raise TransferError(f"MIME {self.mime_type} not permitted for {self.kind.value}")
         if len(self.sha256) != 64:
             raise TransferError("manifest requires a SHA-256 digest")
+        if self.chunk_bundle_ids and len(self.chunk_bundle_ids) != self.chunk_count:
+            raise TransferError("chunk bundle id count must match chunk count")
 
     def is_expired(self, now: datetime) -> bool:
         return self.expires_at is not None and utc(self.expires_at) <= utc(now)
@@ -112,6 +115,7 @@ class FileManifest:
             "sha256": self.sha256,
             "chunk_bytes": self.chunk_bytes,
             "chunk_count": self.chunk_count,
+            "chunk_bundle_ids": list(self.chunk_bundle_ids),
             "available_ranges": [list(r) for r in self.available_ranges],
             "priority_class": self.priority_class.value,
             "expires_at": utc(self.expires_at).isoformat() if self.expires_at else None,
@@ -133,6 +137,7 @@ class FileManifest:
             sha256=d.get("sha256", ""),
             chunk_bytes=int(d.get("chunk_bytes", DEFAULT_CHUNK_BYTES)),
             chunk_count=int(d.get("chunk_count", 0)),
+            chunk_bundle_ids=tuple(d.get("chunk_bundle_ids", [])),
             available_ranges=tuple(tuple(r) for r in d.get("available_ranges", [])),
             priority_class=PriorityClass(d.get("priority_class", "P2")),
             expires_at=(datetime.fromisoformat(d["expires_at"]) if d.get("expires_at") else None),

@@ -396,6 +396,36 @@ class MeshNode:
         sensitivity = incident.access_policy.sensitivity
         allowed = incident.access_policy.allowed_roles
 
+        ttl_seconds = (
+            int((utc(incident.expires_at) - utc(now)).total_seconds())
+            if incident.expires_at
+            else 3600
+        )
+        chunk_bundles: list[Bundle] = []
+        for index, chunk in chunk_bytes(data, manifest):
+            chunk_bundles.append(
+                seal(
+                    Bundle.create(
+                        incident_id=incident_id,
+                        source_node_id=self.identity.id,
+                        payload=json.dumps(
+                            {"file_id": manifest.file_id, "index": index, "data": chunk.hex()}
+                        ).encode("utf-8"),
+                        payload_type=PayloadType.ATTACHMENT_CHUNK,
+                        now=now,
+                        ttl_seconds=ttl_seconds,
+                        priority_class=incident.priority_class,
+                        priority_score=max(0, incident.priority_score - 1),
+                        sensitivity=sensitivity,
+                        role_scope=allowed,
+                    ),
+                    keystore=self.keystore,
+                    key_id=self.org_key_id,
+                    signer_node_id=self.identity.id,
+                )
+            )
+
+        manifest.chunk_bundle_ids = tuple(bundle.id for bundle in chunk_bundles)
         manifest_bundle = seal(
             Bundle.create(
                 incident_id=incident_id,
@@ -403,9 +433,7 @@ class MeshNode:
                 payload=json.dumps(manifest.to_dict()).encode("utf-8"),
                 payload_type=PayloadType.ATTACHMENT_MANIFEST,
                 now=now,
-                ttl_seconds=int((utc(incident.expires_at) - utc(now)).total_seconds())
-                if incident.expires_at
-                else 3600,
+                ttl_seconds=ttl_seconds,
                 priority_class=incident.priority_class,
                 priority_score=incident.priority_score,
                 sensitivity=sensitivity,
@@ -417,28 +445,7 @@ class MeshNode:
         )
         self._store_and_queue(manifest_bundle, incident, sensitivity, allowed)
 
-        for index, chunk in chunk_bytes(data, manifest):
-            chunk_bundle = seal(
-                Bundle.create(
-                    incident_id=incident_id,
-                    source_node_id=self.identity.id,
-                    payload=json.dumps(
-                        {"file_id": manifest.file_id, "index": index, "data": chunk.hex()}
-                    ).encode("utf-8"),
-                    payload_type=PayloadType.ATTACHMENT_CHUNK,
-                    now=now,
-                    ttl_seconds=int((utc(incident.expires_at) - utc(now)).total_seconds())
-                    if incident.expires_at
-                    else 3600,
-                    priority_class=incident.priority_class,
-                    priority_score=max(0, incident.priority_score - 1),
-                    sensitivity=sensitivity,
-                    role_scope=allowed,
-                ),
-                keystore=self.keystore,
-                key_id=self.org_key_id,
-                signer_node_id=self.identity.id,
-            )
+        for chunk_bundle in chunk_bundles:
             self._store_and_queue(chunk_bundle, incident, sensitivity, allowed)
 
         self.audit(
@@ -550,6 +557,7 @@ class MeshNode:
                 session.accept(now=self.clock.now())
                 session.begin()
                 self.transfers[manifest.file_id] = session
+                self._replay_stored_attachment_chunks(session)
             except Exception as exc:
                 self.audit(
                     "ATTACHMENT_REJECTED",
@@ -559,41 +567,74 @@ class MeshNode:
         elif kind is PayloadType.ATTACHMENT_CHUNK:
             session = self.transfers.get(doc.get("file_id", ""))
             if session is None:
-                return  # manifest not seen yet; the chunk will be re-offered
-            try:
-                session.receive_chunk(int(doc["index"]), bytes.fromhex(doc["data"]))
-            except Exception:
-                return
-            if not session.missing:
-                try:
-                    path = session.verify_and_commit()
-                except Exception as exc:
-                    self.audit(
-                        "ATTACHMENT_FAILED",
-                        incident_id=session.manifest.incident_id,
-                        detail={"file_id": session.manifest.file_id, "reason": str(exc)},
-                    )
-                    return
-                att = Attachment(
-                    id=session.manifest.attachment_id or session.manifest.file_id,
-                    incident_id=session.manifest.incident_id,
-                    kind=session.manifest.kind,
-                    file_name=session.manifest.file_name,
-                    mime_type=session.manifest.mime_type,
-                    size_bytes=session.manifest.size_bytes,
-                    sha256=session.manifest.sha256,
-                    local_path=str(path),
-                    committed=True,
-                    created_at=self.clock.now(),
-                )
-                self.store.save_attachment(att.to_dict())
-                self.audit(
-                    "ATTACHMENT_COMMITTED",
-                    incident_id=att.incident_id,
-                    detail={"attachment_id": att.id, "sha256": att.sha256[:12], "verified": True},
-                )
+                return  # manifest not seen yet; the stored chunk will be replayed later
+            self._receive_attachment_chunk(session, doc, bundle_id=bundle.id)
         elif kind is PayloadType.ACKNOWLEDGEMENT:
             self.apply_acknowledgement(doc)
+
+    def _replay_stored_attachment_chunks(self, session: TransferSession) -> None:
+        """Apply chunk bundles that arrived before their manifest.
+
+        Each chunk is still a normal DMBP bundle, so the peer inventory prevents
+        retransmitting chunks this node already has. Replaying from local storage
+        turns those stored packets into file-transfer progress once the manifest
+        finally provides the complete checklist.
+        """
+        for stored in self.store.bundles_for_incident(
+            session.manifest.incident_id, PayloadType.ATTACHMENT_CHUNK
+        ):
+            if not session.missing:
+                break
+            try:
+                plaintext = unseal(stored, keystore=self.keystore, now=self.clock.now())
+                doc = json.loads(plaintext.decode("utf-8"))
+            except Exception:
+                continue
+            self._receive_attachment_chunk(session, doc, bundle_id=stored.id)
+
+    def _receive_attachment_chunk(
+        self, session: TransferSession, doc: dict, *, bundle_id: str | None = None
+    ) -> None:
+        try:
+            index = int(doc["index"])
+            expected_ids = session.manifest.chunk_bundle_ids
+            if expected_ids and (index >= len(expected_ids) or expected_ids[index] != bundle_id):
+                return
+            session.receive_chunk(index, bytes.fromhex(doc["data"]))
+        except Exception:
+            return
+        self._commit_attachment_if_complete(session)
+
+    def _commit_attachment_if_complete(self, session: TransferSession) -> None:
+        if session.missing:
+            return
+        try:
+            path = session.verify_and_commit()
+        except Exception as exc:
+            self.audit(
+                "ATTACHMENT_FAILED",
+                incident_id=session.manifest.incident_id,
+                detail={"file_id": session.manifest.file_id, "reason": str(exc)},
+            )
+            return
+        att = Attachment(
+            id=session.manifest.attachment_id or session.manifest.file_id,
+            incident_id=session.manifest.incident_id,
+            kind=session.manifest.kind,
+            file_name=session.manifest.file_name,
+            mime_type=session.manifest.mime_type,
+            size_bytes=session.manifest.size_bytes,
+            sha256=session.manifest.sha256,
+            local_path=str(path),
+            committed=True,
+            created_at=self.clock.now(),
+        )
+        self.store.save_attachment(att.to_dict())
+        self.audit(
+            "ATTACHMENT_COMMITTED",
+            incident_id=att.incident_id,
+            detail={"attachment_id": att.id, "sha256": att.sha256[:12], "verified": True},
+        )
 
     # ---------------------------------------------------------- coordination
 

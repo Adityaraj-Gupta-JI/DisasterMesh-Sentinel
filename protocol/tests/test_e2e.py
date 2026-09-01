@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from dms.crypto.sealing import unseal
 from dms.dispatch.service import DispatchService, default_resources
 from dms.domain.enums import (
     AttachmentKind,
@@ -164,6 +165,67 @@ def test_duplicate_transfer_is_idempotent(abc):
     mesh.exchange("B", "C")
     mesh.exchange("B", "C")
     assert (c.store.count_incidents(), len(c.store.bundle_ids())) == before
+
+
+def test_media_multihop_uses_destination_chunk_inventory(mesh):
+    """A relay does not resend media chunks the coordinator already stores."""
+    a, b, c = mesh.nodes["A"], mesh.nodes["B"], mesh.nodes["C"]
+    incident = a.report_incident(REPORT)
+    a.attach(incident.id, IMAGE, file_name="collapse.jpg", mime_type="image/jpeg")
+
+    mesh.connect("A", "B")
+    mesh.exchange("A", "B")
+
+    b_chunks = [
+        b.store.get_bundle(bundle_id)
+        for bundle_id in b.store.bundle_ids()
+        if b.store.get_bundle(bundle_id).header.payload_type is PayloadType.ATTACHMENT_CHUNK
+    ]
+    assert len(b_chunks) >= 2, "fixture must exercise multi-packet media"
+
+    already_at_destination = b_chunks[0].forwarded("C", mesh.clock.now())
+    stored, reason = c.accept_bundle(already_at_destination, received_from="B")
+    assert stored is True
+    assert reason == "stored"
+
+    mesh.connect("B", "C")
+    mesh.exchange("B", "C")
+
+    assert c.sync.stats.bundles_deduplicated == 0
+    assert c.store.attachments_for(incident.id)[0]["committed"] is True
+
+
+def test_chunks_received_before_manifest_are_replayed_from_storage(mesh):
+    """Stored chunk bundles become transfer progress when the manifest arrives."""
+    a, b, c = mesh.nodes["A"], mesh.nodes["B"], mesh.nodes["C"]
+    incident = a.report_incident(REPORT)
+    a.attach(incident.id, IMAGE, file_name="collapse.jpg", mime_type="image/jpeg")
+
+    mesh.connect("A", "B")
+    mesh.exchange("A", "B")
+
+    manifest_bundle = next(
+        b.store.get_bundle(bundle_id)
+        for bundle_id in b.store.bundle_ids()
+        if b.store.get_bundle(bundle_id).header.payload_type is PayloadType.ATTACHMENT_MANIFEST
+    )
+    chunk_bundles = [
+        b.store.get_bundle(bundle_id)
+        for bundle_id in b.store.bundle_ids()
+        if b.store.get_bundle(bundle_id).header.payload_type is PayloadType.ATTACHMENT_CHUNK
+    ]
+    manifest = unseal(manifest_bundle, keystore=c.keystore, now=mesh.clock.now())
+    assert all(bundle.id in manifest.decode("utf-8") for bundle in chunk_bundles)
+
+    for chunk in chunk_bundles:
+        c.accept_bundle(chunk.forwarded("C", mesh.clock.now()), received_from="B")
+    assert c.store.attachments_for(incident.id) == []
+
+    c.accept_bundle(manifest_bundle.forwarded("C", mesh.clock.now()), received_from="B")
+
+    attachments = c.store.attachments_for(incident.id)
+    assert len(attachments) == 1
+    assert attachments[0]["committed"] is True
 
 
 def test_repeated_acknowledgement_is_absorbed(abc):
