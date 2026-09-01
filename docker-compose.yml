@@ -1,0 +1,50 @@
+# Local integration environment.
+#
+# NOT VERIFIED: docker is not installed on the development machine, so this file has
+# never been run. It is written from the same commands the Makefile uses, which have
+# been run directly. Treat it as a starting point, not a tested artifact.
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DMS_ENV: development
+      DMS_DATABASE_URL: sqlite:////data/dms_gateway.db
+      DMS_CORS_ORIGINS: http://localhost:5173
+      # Supply real keys through the environment; never bake them into an image.
+      DMS_API_KEYS: ${DMS_API_KEYS:-}
+    ports: ["8000:8000"]
+    volumes: ["gateway-data:/data"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  ai:
+    build:
+      context: .
+      dockerfile: ai-service/Dockerfile
+    environment:
+      DMS_AI_MODE: mock
+    ports: ["8001:8001"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  dashboard:
+    build:
+      context: ./dashboard
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports: ["5173:5173"]
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+volumes:
+  gateway-data:
