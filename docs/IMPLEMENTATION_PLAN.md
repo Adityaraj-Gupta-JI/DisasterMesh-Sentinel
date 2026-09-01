@@ -11,7 +11,7 @@ domain contracts → mock offline flow → persistence → protocol → sync
 ```
 
 The mock transport came before any radio work, so the entire sync path could be tested
-without hardware. That decision is why 324 core tests run in under two seconds and why
+without hardware. That decision is why 328 core tests run locally and why
 the Android gap costs verification of the radio layer only, not of the product logic.
 
 ## Phases and outcomes
@@ -27,8 +27,8 @@ the Android gap costs verification of the radio layer only, not of the product l
 | 7 | Transport abstraction + mock radio | VERIFIED — drives every sync test |
 | 8 | Persistence with migrations | VERIFIED — 15 tests |
 | 9 | Sync engine + inventory exchange | VERIFIED — 11 + 11 tests |
-| 10 | File manifest + resumable transfer | VERIFIED — 13 tests |
-| 11 | MeshNode composition + e2e | VERIFIED — 22 tests, all MVP criteria |
+| 10 | File manifest + resumable transfer | VERIFIED — 15 tests |
+| 11 | MeshNode composition + e2e | VERIFIED — 24 tests, all MVP criteria |
 | 12 | Dispatch simulation | VERIFIED — 16 tests |
 | 13 | Clustering | VERIFIED — 8 tests |
 | 14 | Simulator, 10 scenarios | VERIFIED — 13 regression tests |

@@ -78,7 +78,11 @@ text-before-media rule are enforced in exactly one place.
 
 Delivery is recorded when a **receipt arrives**, never on send. A transfer cut off
 mid-flight is therefore re-offered on the next contact — the bug that the file-interruption
-simulator scenario caught.
+simulator scenario caught. Attachment manifests also carry the exact chunk bundle IDs,
+so a receiver can use its local inventory as a checklist and avoid asking a relay to
+send media chunks it already holds. If chunks arrive before their manifest, the node
+replays those stored bundles into the transfer session when the manifest eventually
+arrives.
 
 ## Scheduling order
 

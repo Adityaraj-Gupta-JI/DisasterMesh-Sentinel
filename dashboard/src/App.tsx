@@ -10,11 +10,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionPanel } from "./components/ActionPanel";
 import { IncidentDetailPanel } from "./components/IncidentDetail";
 import { IncidentQueue } from "./components/IncidentQueue";
+import { MeshSimulation } from "./components/MeshSimulation";
 import { ApiError, api, type PriorityClass } from "./lib/api";
 
 const REFRESH_MS = 5000;
 
-export default function App() {
+function CommandInbox() {
   const [filter, setFilter] = useState<PriorityClass | "ALL">("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showNodesModal, setShowNodesModal] = useState(false);
@@ -285,6 +286,39 @@ export default function App() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+export default function App() {
+  const [view, setView] = useState<"inbox" | "simulation">("simulation");
+
+  return (
+    <div className="app-shell">
+      <nav className="view-nav" aria-label="Primary views">
+        <div className="brand-lockup">
+          <span className="brand-mark" aria-hidden="true">DM</span>
+          <span><strong>DisasterMesh</strong><small>Sentinel</small></span>
+        </div>
+        <div className="view-tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={view === "inbox"}
+            onClick={() => setView("inbox")}
+          >
+            Command inbox
+          </button>
+          <button
+            role="tab"
+            aria-selected={view === "simulation"}
+            onClick={() => setView("simulation")}
+          >
+            Mesh simulation
+          </button>
+        </div>
+        <span className="prototype-label">Offline prototype</span>
+      </nav>
+      {view === "inbox" ? <CommandInbox /> : <MeshSimulation />}
     </div>
   );
 }
