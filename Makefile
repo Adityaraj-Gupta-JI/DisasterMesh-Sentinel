@@ -59,6 +59,10 @@ test-android: ## Android unit tests
 demo: ## Run the full offline demo (reporter -> relay -> coordinator -> dispatch)
 	$(PY) scripts/demo.py
 
+.PHONY: multihop
+multihop: ## Simulate multi-hop delivery over a chain (see --help for topologies)
+	$(PY) scripts/multihop_demo.py --topology chain --nodes 6
+
 .PHONY: demo-hindi
 demo-hindi: ## Run the demo with a Hindi report
 	$(PY) scripts/demo.py --language hi

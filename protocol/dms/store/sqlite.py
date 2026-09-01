@@ -345,19 +345,6 @@ class SqliteStore:
         ).fetchone()
         return Bundle.from_wire(row["wire"]) if row else None
 
-    def bundles_for_incident(
-        self, incident_id: str, payload_type: PayloadType | None = None
-    ) -> list[Bundle]:
-        """Stored bundles for one incident, optionally narrowed by payload type."""
-        sql = "SELECT wire FROM bundles WHERE incident_id=?"
-        params: list[Any] = [incident_id]
-        if payload_type is not None:
-            sql += " AND payload_type=?"
-            params.append(payload_type.value)
-        sql += " ORDER BY rowid"
-        rows = self._conn.execute(sql, params).fetchall()
-        return [Bundle.from_wire(r["wire"]) for r in rows]
-
     def bundle_ids(self) -> list[str]:
         return [r["bundle_id"] for r in self._conn.execute("SELECT bundle_id FROM bundles")]
 

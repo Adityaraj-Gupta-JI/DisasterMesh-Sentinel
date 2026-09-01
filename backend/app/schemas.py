@@ -102,6 +102,10 @@ class AttachmentCreate(BaseModel):
     sha256: str = Field(min_length=64, max_length=64)
     kind: AttachmentKind = AttachmentKind.IMAGE
     verified: bool = False
+    # Optional base64 of the file itself. When present the gateway stores the bytes
+    # so the dashboard can render them; when absent, behaviour is exactly as before
+    # (metadata only). Backward compatible with every existing caller.
+    data_base64: str | None = None
 
     @field_validator("mime_type")
     @classmethod
@@ -115,6 +119,40 @@ class AttachmentCreate(BaseModel):
     def hexadecimal(cls, value: str) -> str:
         int(value, 16)  # raises ValueError when not hex
         return value.lower()
+
+
+class TranscribeRequest(BaseModel):
+    """Audio to be turned into text by the existing speech-to-text pipeline."""
+
+    audio_base64: str = Field(min_length=1)
+    mime_type: str = Field(default="audio/wav", max_length=100)
+    language_hint: str | None = Field(default=None, max_length=8)
+    duration_s: float | None = Field(default=None, ge=0)
+
+    @field_validator("mime_type")
+    @classmethod
+    def audio_only(cls, value: str) -> str:
+        if not value.startswith("audio/"):
+            raise ValueError("mime_type must be an audio type")
+        return value
+
+
+class ComposeRequest(BaseModel):
+    """Free text (typed, or transcribed from audio) to classify and file as an
+    incident through the same pipeline any client uses."""
+
+    text: str = Field(min_length=1, max_length=MAX_TEXT)
+    source_node_id: str = Field(default="dashboard", min_length=1, max_length=64)
+    source_language: str | None = Field(default=None, max_length=8)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("text must not be blank")
+        return value
 
 
 class ResourceCreate(BaseModel):

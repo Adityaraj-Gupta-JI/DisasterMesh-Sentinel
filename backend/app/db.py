@@ -12,9 +12,12 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     create_engine,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -78,6 +81,10 @@ class AttachmentRow(Base):
     kind = Column(String, nullable=False, default="IMAGE")
     verified = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=_now)
+    # Optional inline bytes so the coordinator dashboard can render the actual image
+    # or play the audio. Nullable: existing rows and metadata-only attachments are
+    # unaffected, and the mesh transfer path that carries bytes elsewhere is untouched.
+    data = Column(LargeBinary, nullable=True)
 
 
 class ClassificationRow(Base):
@@ -192,7 +199,30 @@ def session_factory():
 
 def init_db() -> None:
     """Create tables. Never drops or rewrites existing data."""
-    Base.metadata.create_all(engine())
+    eng = engine()
+    Base.metadata.create_all(eng)
+    _add_missing_columns(eng)
+
+
+def _add_missing_columns(eng) -> None:
+    """Additively backfill columns introduced after a database was first created.
+
+    Only ever issues ``ADD COLUMN`` for a nullable column that is missing, so an
+    older database keeps every existing row and value untouched.
+    """
+    additive = {
+        "attachments": {"data": "BLOB"},
+    }
+    inspector = inspect(eng)
+    existing_tables = set(inspector.get_table_names())
+    with eng.begin() as conn:
+        for table, columns in additive.items():
+            if table not in existing_tables:
+                continue
+            present = {c["name"] for c in inspector.get_columns(table)}
+            for name, ddl_type in columns.items():
+                if name not in present:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
 
 
 def reset_engine(url: str) -> None:

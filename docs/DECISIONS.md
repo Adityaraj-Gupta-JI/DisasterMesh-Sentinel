@@ -207,3 +207,62 @@ alarm rather than a fire door. Running `PriorityContractTest` remains necessary 
 tracked as release blocker B3. Regenerating the contract is deliberate (`make
 contract`); the diff is the review, and a changed expected score has to be justified
 rather than absorbed.
+
+## ADR-0010 — Multi-hop simulation reuses the mesh stack; live view is polled, not pushed
+Date: 2026-09-01 · Status: Accepted
+### Context
+We needed to simulate and watch arbitrary N-hop delivery, not just the fixed
+reporter→relay→coordinator line, and to see hops live in the coordinator dashboard.
+The mock radio already supports any link graph, bundles already carry `hop_count`
+and `path`, and the dashboard already polls the gateway every 5s.
+### Decision
+Build the multi-hop driver inside `protocol/dms/sim/` on top of the existing `Mesh`,
+`MockRadio`, and node stack — no new top-level package, no new routing code. The
+driver emits one ordered `MeshEvent` stream (topology, hops, delivery, quiescence);
+the terminal view, an in-memory gateway ring buffer, and the dashboard are all just
+renderers of that stream. The dashboard reads it by polling `/v1/mesh/runs/{id}/events?since=`
+(a monotonic cursor), matching the existing React-Query pattern, rather than a WebSocket.
+### Consequences
+- Hops are measured from the protocol's own `hop_count`/`path`, never re-derived.
+- Runs are ephemeral and in-memory; they vanish on gateway restart, like the mesh itself.
+- A ~700ms poll shows near-real-time hops without new transport machinery or a socket to manage.
+- The six-hop DMBP `hop_limit` is a real ceiling: chains longer than seven nodes do not
+  deliver end to end, and a test asserts this rather than treating it as a bug.
+### Alternatives considered
+- A separate simulation project: rejected — it would re-import or duplicate the whole stack.
+- WebSocket streaming: deferred — more plumbing than the 5s-poll dashboard needs today.
+- Explicit routing tables: rejected — a disaster mesh is store-carry-forward gossip, not routed.
+
+## ADR-0011 — Image bytes and audio transcription are additive, hung off the existing flows
+Date: 2026-09-01 · Status: Accepted
+### Context
+Coordinators saw a placeholder box instead of photo evidence, and there was no way to
+send an image or a voice note from the dashboard. The mesh already transfers image
+chunks, the gateway already stored attachment *metadata*, and the AI service already
+exposes `/v1/transcribe` and a priority engine. The requirement was to extend, not
+rewrite: keep the text-message flow exactly as it is.
+### Decision
+- **Image render bug:** root cause was that attachment bytes were never stored or
+  served — only metadata. Fixed structurally by adding a nullable `attachments.data`
+  column (with an additive `ALTER TABLE` for existing databases), storing bytes only
+  when a caller supplies them, verifying size + sha256, and serving them from a new
+  `GET …/attachments/{id}/content` endpoint. The dashboard fetches the bytes as an
+  authenticated blob and renders a real `<img>`.
+- **Audio:** a new `POST /v1/transcribe` wraps the existing speech-to-text mock; the
+  transcript is sent through a new `POST /v1/compose` that classifies with the same
+  triage + priority engine a device uses and then calls the existing `create_incident`
+  verbatim. Audio → text → the ordinary incident pipeline; no parallel message system.
+- Everything is behind new endpoints, new schema fields (all optional), and new UI
+  tabs/components. No existing endpoint, schema, or flow was modified.
+### Consequences
+- Metadata-only attachments and every existing caller keep working unchanged; bytes
+  are opt-in via `data_base64`.
+- A transcribed voice note is indistinguishable from a typed report downstream —
+  storage, clustering, dispatch, and display all apply with zero new code paths.
+- Android received the same features (picker, Coil rendering, transcribe→report) but
+  **cannot be compiled or verified here**; those changes are additive and unverified.
+### Alternatives considered
+- Serving image bytes via a query-param token so a bare `<img src>` works: rejected —
+  it would weaken the auth model; the authenticated-blob fetch keeps scoping intact.
+- Duplicating incident creation inside `/v1/compose`: rejected — it calls the existing
+  `create_incident` so there is one persistence path, not two.

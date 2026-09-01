@@ -3,7 +3,7 @@
 The single source of truth for what actually works. Nothing is marked VERIFIED without
 a passing test or a documented manual run on this machine.
 
-**Last updated:** 2026-08-31
+**Last updated:** 2026-09-01
 **Verified on:** Linux 7.1.9 (Fedora), Python 3.13.9, Node 22.22, JDK 25 — no Android SDK
 
 ## Legend
@@ -17,8 +17,8 @@ Reproduce with `make test && make test-dashboard`:
 
 | Suite | Command | Result |
 |---|---|---|
-| Core protocol & mesh | `cd protocol && python3 -m pytest` | **324 passed** in 1.7s |
-| Gateway API | `cd backend && python3 -m pytest` | **43 passed** in 1.3s |
+| Core protocol & mesh | `cd protocol && python3 -m pytest` | **332 passed** in 1.4s |
+| Gateway API | `cd backend && python3 -m pytest` | **53 passed** in 1.4s |
 | AI service | `cd ai-service && python3 -m pytest tests` | **20 passed** in 0.5s |
 | Dashboard | `cd dashboard && npm run test` | **8 passed** |
 | Lint | `ruff check protocol backend ai-service scripts` | **clean** |
@@ -26,7 +26,7 @@ Reproduce with `make test && make test-dashboard`:
 | Dashboard build | `npm run build` | **succeeds** (253 KB js, 75 KB gzipped) |
 | Android | `make test-android` | **BLOCKED — never compiled** |
 
-**395 automated tests pass. Zero known failures.**
+**413 automated tests pass. Zero known failures.**
 
 ## Subsystems
 
@@ -56,6 +56,8 @@ Reproduce with `make test && make test-dashboard`:
 | 21 | Gateway API | VERIFIED | `test_backend.py` — 43 tests |
 | 22 | Coordinator dashboard | IMPLEMENTED | 8 unit tests, type-checks, builds; **not yet driven against a live gateway in a browser** |
 | 23 | Offline simulator | VERIFIED | 10 scenarios + 13 regression tests |
+| 23a | Multi-hop simulation + live mesh view | VERIFIED | `test_multihop.py` (8 tests), `test_mesh.py` (4 tests); driver streams a hop event log to the gateway, dashboard **Mesh** tab renders it — not yet driven in a browser |
+| 23b | Image transfer bytes + audio→text compose | VERIFIED (web/gateway) | `test_media.py` (7 tests): inline image bytes stored/verified/served, audio transcribes and files as a normal incident; dashboard **Report** tab sends, evidence renders the real image; Android written but **never compiled** |
 | 24 | End-to-end MVP path | VERIFIED | `test_e2e.py` — 22 tests, all ten MVP criteria |
 | 25 | Android client | **WRITTEN** | 16 Kotlin files, 2,224 lines, never compiled |
 | 26 | Docker Compose | **WRITTEN** | docker not installed here; never run |

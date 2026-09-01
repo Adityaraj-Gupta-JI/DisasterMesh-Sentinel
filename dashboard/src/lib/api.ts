@@ -65,6 +65,8 @@ export const AttachmentSchema = z.object({
   size_bytes: z.number(),
   sha256: z.string(),
   verified: z.boolean(),
+  kind: z.string().default("IMAGE"),
+  has_content: z.boolean().default(false),
 });
 
 export const DispatchSchema = z.object({
@@ -118,6 +120,59 @@ export const NodeSchema = z.object({
   last_seen_at: z.string().nullable().optional(),
 });
 export type NodeInfo = z.infer<typeof NodeSchema>;
+
+// --- Live mesh (multi-hop simulation view) ------------------------------------
+
+export const MeshNodeSchema = z.object({
+  id: z.string(),
+  role: z.string(),
+  x: z.number(),
+  y: z.number(),
+});
+export const MeshEdgeSchema = z.object({ a: z.string(), b: z.string() });
+export const MeshTopologySchema = z.object({
+  name: z.string().default("mesh"),
+  nodes: z.array(MeshNodeSchema).default([]),
+  edges: z.array(MeshEdgeSchema).default([]),
+});
+export type MeshTopology = z.infer<typeof MeshTopologySchema>;
+
+export const MeshEventSchema = z.object({
+  seq: z.number(),
+  round: z.number().default(0),
+  type: z.string(),
+  from_node: z.string().nullable().optional(),
+  to_node: z.string().nullable().optional(),
+  bundle_id: z.string().nullable().optional(),
+  incident_id: z.string().nullable().optional(),
+  hop: z.number().nullable().optional(),
+  path: z.array(z.string()).default([]),
+  ts: z.number().default(0),
+});
+export type MeshEvent = z.infer<typeof MeshEventSchema>;
+
+export const MeshMetricsSchema = z
+  .object({
+    delivered: z.number(),
+    expected: z.number(),
+    delivery_ratio: z.number(),
+    avg_hops: z.number(),
+    max_hops: z.number(),
+    bundles_transferred: z.number(),
+    duplicates_suppressed: z.number(),
+    rounds: z.number(),
+  })
+  .partial();
+export type MeshMetrics = z.infer<typeof MeshMetricsSchema>;
+
+export const MeshRunSummarySchema = z.object({
+  run_id: z.string().nullable(),
+  topology: MeshTopologySchema.optional(),
+  metrics: MeshMetricsSchema.default({}),
+  done: z.boolean().default(false),
+  latest_seq: z.number().default(-1),
+});
+export type MeshRunSummary = z.infer<typeof MeshRunSummarySchema>;
 
 export class ApiError extends Error {
   constructor(readonly code: string, message: string, readonly status: number) {
@@ -178,6 +233,32 @@ export const api = {
         body: JSON.stringify({ node_id: "dashboard", note }),
       },
     ),
+  getMeshLatest: () =>
+    request("/v1/mesh/runs/latest", MeshRunSummarySchema).catch(
+      () => ({ run_id: null, metrics: {}, done: false, latest_seq: -1 }) as MeshRunSummary,
+    ),
+  getMeshEvents: (runId: string, since: number) =>
+    request(
+      `/v1/mesh/runs/${runId}/events?since=${since}`,
+      z.object({
+        events: z.array(MeshEventSchema),
+        latest_seq: z.number(),
+        done: z.boolean(),
+        metrics: MeshMetricsSchema.default({}),
+      }),
+    ),
+  startMeshSimulation: (body: {
+    topology: string;
+    nodes?: number;
+    width?: number;
+    height?: number;
+    radius?: number;
+    step_delay?: number;
+  }) =>
+    request(`/v1/mesh/simulate`, z.object({ run_id: z.string() }), {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   dispatch: (incidentId: string, resourceId: string, reason: string) =>
     request(
       `/v1/dispatch?confirm=true`,
@@ -188,6 +269,95 @@ export const api = {
       },
     ),
 };
+
+// --- Media: attachment bytes, and audio → text → incident ---------------------
+
+/**
+ * Fetch an attachment's bytes as an object URL the browser can render.
+ *
+ * The content endpoint is auth-scoped, and an <img src> cannot carry the bearer
+ * token, so we fetch with the header and hand back a blob URL. The caller must
+ * URL.revokeObjectURL it when the element unmounts.
+ */
+async function fetchAttachmentObjectUrl(incidentId: string, attachmentId: string): Promise<string> {
+  const response = await fetch(
+    `${API_URL}/v1/incidents/${incidentId}/attachments/${attachmentId}/content`,
+    { headers: { Authorization: `Bearer ${API_KEY}` } },
+  );
+  if (!response.ok) {
+    throw new ApiError("content_error", `attachment content ${response.status}`, response.status);
+  }
+  return URL.createObjectURL(await response.blob());
+}
+
+export const TranscriptSchema = z.object({
+  text: z.string(),
+  language: z.string().default("und"),
+  low_quality: z.boolean().default(false),
+  confidence: z.number().nullable().optional(),
+});
+export type Transcript = z.infer<typeof TranscriptSchema>;
+
+export const media = {
+  fetchAttachmentObjectUrl,
+  transcribe: (audioBase64: string, mimeType: string, durationS?: number) =>
+    request("/v1/transcribe", TranscriptSchema, {
+      method: "POST",
+      body: JSON.stringify({
+        audio_base64: audioBase64,
+        mime_type: mimeType,
+        duration_s: durationS ?? null,
+      }),
+    }),
+  compose: (text: string, location?: { latitude: number; longitude: number }) =>
+    request(
+      "/v1/compose",
+      z.object({ id: z.string(), status: z.string(), deduplicated: z.boolean().default(false) }),
+      {
+        method: "POST",
+        body: JSON.stringify({
+          text,
+          latitude: location?.latitude ?? null,
+          longitude: location?.longitude ?? null,
+        }),
+      },
+    ),
+  uploadAttachment: (
+    incidentId: string,
+    file: {
+      file_name: string;
+      mime_type: string;
+      size_bytes: number;
+      sha256: string;
+      kind: string;
+      data_base64: string;
+    },
+  ) =>
+    request(
+      `/v1/incidents/${incidentId}/attachments`,
+      z.object({ id: z.string(), has_content: z.boolean().default(false) }),
+      { method: "POST", body: JSON.stringify(file) },
+    ),
+};
+
+/** SHA-256 of a byte array as lowercase hex, using the Web Crypto API. */
+export async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** Base64 of an ArrayBuffer, chunked so large files don't blow the call stack. */
+export function toBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
 
 /** Human-readable label for a priority. Colour is never the only signal. */
 export function priorityLabel(priority: PriorityClass): string {

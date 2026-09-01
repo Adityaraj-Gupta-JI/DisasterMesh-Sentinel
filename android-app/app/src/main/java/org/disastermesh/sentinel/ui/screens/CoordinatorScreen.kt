@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -100,6 +102,28 @@ fun CoordinatorInboxScreen(
                                     incident.status.name.lowercase().replace('_', ' '),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
+                            // Feature: Image Transfer — render the actual photo evidence,
+                            // not a placeholder box, when a content URL is available.
+                            if (imageUrlFor != null) {
+                                incident.attachmentIds.forEach { attId ->
+                                    coil.compose.AsyncImage(
+                                        model = coil.request.ImageRequest.Builder(LocalContext.current)
+                                            .data(imageUrlFor(attId))
+                                            .apply {
+                                                if (authHeader != null) {
+                                                    addHeader("Authorization", authHeader)
+                                                }
+                                            }
+                                            .crossfade(true)
+                                            .build(),
+                                        contentDescription = "Photo evidence",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 260.dp)
+                                            .padding(top = Spacing.xs),
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -116,6 +140,10 @@ fun IncidentDetailScreen(
     onDispatch: (resourceId: String, reason: String) -> Unit,
     onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
+    // Additive: when provided, image evidence renders as the actual photo instead of
+    // just a count. Defaults keep every existing caller working unchanged.
+    imageUrlFor: ((attachmentId: String) -> String)? = null,
+    authHeader: String? = null,
 ) {
     var pending by remember { mutableStateOf<ResourceOption?>(null) }
     val acknowledged = incident.status in setOf(

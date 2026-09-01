@@ -160,8 +160,12 @@ fun NewIncidentScreen(
     ) -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
+    // Additive: a transcribed voice note pre-fills the text; both default to no-op
+    // so every existing caller keeps working unchanged.
+    initialText: String = "",
+    onRecordVoice: (() -> Unit)? = null,
 ) {
-    var text by remember { mutableStateOf("") }
+    var text by remember { mutableStateOf(initialText) }
     var shareLocation by remember { mutableStateOf(true) }
     var selectedType by remember { mutableStateOf(org.disastermesh.sentinel.domain.DisasterType.OTHER) }
     var selectedUrgency by remember { mutableStateOf(org.disastermesh.sentinel.domain.Urgency.HIGH) }
@@ -190,6 +194,12 @@ fun NewIncidentScreen(
             modifier = Modifier.fillMaxWidth().height(120.dp),
             placeholder = { Text("Describe the situation, dangers, and immediate needs...") },
         )
+        if (onRecordVoice != null) {
+            OutlinedButton(
+                onClick = onRecordVoice,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("🎤 Record voice — transcribed into the report") }
+        }
 
         Text("Disaster Type", style = MaterialTheme.typography.titleSmall)
         Row(

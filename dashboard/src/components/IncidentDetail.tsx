@@ -1,6 +1,7 @@
 /** Incident detail: what happened, where, how many, what evidence, who acknowledged. */
 import type { IncidentDetail as Detail } from "../lib/api";
 import { peopleLabel, relativeTime } from "../lib/api";
+import { AttachmentMedia } from "./AttachmentMedia";
 import { LanguageBadge, PriorityBadge, StatusBadge, VerificationBadge } from "./Badges";
 
 export function IncidentDetailPanel({ detail }: { detail: Detail }) {
@@ -75,14 +76,7 @@ export function IncidentDetailPanel({ detail }: { detail: Detail }) {
         ) : (
           <div className="evidence">
             {attachments.map((file) => (
-              <div className="evidence-row" key={file.id}>
-                <span>{file.file_name}</span>
-                <span className={`badge ${file.verified ? "solid-ok" : "outline"}`}>
-                  {file.verified ? "hash verified" : "transfer pending"}
-                </span>
-                <code>{file.sha256.slice(0, 12)}…</code>
-                <span>{(file.size_bytes / 1024).toFixed(0)} KB</span>
-              </div>
+              <AttachmentMedia key={file.id} incidentId={incident.id} file={file} />
             ))}
           </div>
         )}
