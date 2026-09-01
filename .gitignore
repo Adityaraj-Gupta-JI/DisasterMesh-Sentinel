@@ -43,3 +43,9 @@ simulation-output/
 .idea/
 .vscode/
 .DS_Store
+
+# Local agent instructions
+CLAUDE.md
+AGENTS.md
+.claude/
+.codex/
