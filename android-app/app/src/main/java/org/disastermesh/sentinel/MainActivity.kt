@@ -8,6 +8,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
@@ -60,6 +65,7 @@ import org.disastermesh.sentinel.ui.theme.Badge
 import org.disastermesh.sentinel.ui.theme.SentinelTheme
 import org.disastermesh.sentinel.ui.theme.VerifiedGreen
 import org.disastermesh.sentinel.ui.theme.RoutineGrey
+import org.disastermesh.sentinel.util.VoiceRecorder
 
 /**
  * Single activity hosting all role experiences and full end-to-end communication logic.
@@ -72,6 +78,32 @@ class MainActivity : ComponentActivity() {
         val granted = permissions.entries.all { it.value }
         if (!granted) {
             Toast.makeText(this, "Some mesh permissions were denied; offline local mode active", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Requested lazily on first tap of a record button (Feature: Live Voice
+    // Recording), not bundled into the startup mesh-permission batch — a
+    // reporter who never uses voice shouldn't be prompted for it at launch.
+    private var pendingRecordAudioGranted: (() -> Unit)? = null
+    private val recordAudioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            pendingRecordAudioGranted?.invoke()
+        } else {
+            Toast.makeText(this, "Microphone permission denied — voice recording unavailable", Toast.LENGTH_SHORT).show()
+        }
+        pendingRecordAudioGranted = null
+    }
+
+    private fun ensureRecordAudioPermission(onGranted: () -> Unit) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            onGranted()
+        } else {
+            pendingRecordAudioGranted = onGranted
+            recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
@@ -92,6 +124,7 @@ class MainActivity : ComponentActivity() {
                     SentinelApp(
                         viewModel = viewModel,
                         onRequestPermissions = { requestMeshPermissions() },
+                        onEnsureRecordAudioPermission = ::ensureRecordAudioPermission,
                     )
                 }
             }
@@ -128,10 +161,25 @@ private enum class Tab(val label: String) { REPORT("Report"), RELAY("Relay"), IN
 private fun SentinelApp(
     viewModel: AppViewModel,
     onRequestPermissions: () -> Unit,
+    onEnsureRecordAudioPermission: (onGranted: () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
     var currentTab by remember { mutableStateOf(Tab.REPORT) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+
+    var draftPhotoUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var draftPhotoBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var draftPhotoMime by remember { mutableStateOf<String?>(null) }
+
+    val newReportImagePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null) {
+            draftPhotoUri = uri
+            draftPhotoBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            draftPhotoMime = context.contentResolver.getType(uri) ?: "image/jpeg"
+        }
+    }
 
     // Feature: Image Transfer — pick a photo and upload its bytes to the last report.
     val imagePicker = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -145,20 +193,57 @@ private fun SentinelApp(
             }
         }
     }
-    // Feature: Audio Transfer — pick audio, transcribe it, and pre-fill a new report.
+
+    // Feature: Live Voice Recording — real microphone capture, not a file picker.
+    // A separate VoiceRecorder per context (report composer vs. coordinator note)
+    // since a user could in principle have one screen's draft pending while
+    // visiting the other, and each owns its own MediaRecorder lifecycle.
     var transcribedText by remember { mutableStateOf<String?>(null) }
-    val audioPicker = androidx.activity.compose.rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent(),
-    ) { uri ->
-        if (uri != null) {
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            val mime = context.contentResolver.getType(uri) ?: "audio/ogg"
-            if (bytes != null) {
-                viewModel.transcribeAudio(bytes, mime) { text ->
+    var isRecordingReportVoice by remember { mutableStateOf(false) }
+    val reportVoiceRecorder = remember { VoiceRecorder(context) }
+    val onRecordVoiceForReport = {
+        if (!isRecordingReportVoice) {
+            onEnsureRecordAudioPermission {
+                isRecordingReportVoice = reportVoiceRecorder.start()
+                if (!isRecordingReportVoice) {
+                    Toast.makeText(context, "Microphone unavailable", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } else {
+            isRecordingReportVoice = false
+            val file = reportVoiceRecorder.stop()
+            if (file != null) {
+                val bytes = file.readBytes()
+                file.delete()
+                viewModel.transcribeAudio(bytes, "audio/mp4") { text ->
                     transcribedText = text
                     viewModel.navigateTo(AppScreen.NEW_REPORT)
                 }
+            } else {
+                Toast.makeText(context, "Recording failed — please try again", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    var isRecordingNoteVoice by remember { mutableStateOf(false) }
+    val noteVoiceRecorder = remember { VoiceRecorder(context) }
+    val onStartNoteRecording = {
+        onEnsureRecordAudioPermission {
+            isRecordingNoteVoice = noteVoiceRecorder.start()
+            if (!isRecordingNoteVoice) {
+                Toast.makeText(context, "Microphone unavailable", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    val onStopNoteRecording = {
+        isRecordingNoteVoice = false
+        val file = noteVoiceRecorder.stop()
+        if (file != null) {
+            val bytes = file.readBytes()
+            file.delete()
+            viewModel.recordVoiceNoteForSelected(bytes, "audio/mp4")
+        } else {
+            Toast.makeText(context, "Recording failed — please try again", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -183,9 +268,21 @@ private fun SentinelApp(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text("DisasterMesh Sentinel", style = MaterialTheme.typography.titleMedium)
-                        Text("Node: ${viewModel.repository.nodeId}", style = MaterialTheme.typography.labelSmall)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.app_logo),
+                            contentDescription = "Logo",
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(6.dp)),
+                        )
+                        Column {
+                            Text("DisasterMesh Sentinel", style = MaterialTheme.typography.titleMedium)
+                            Text("Node: ${viewModel.repository.nodeId}", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 },
                 actions = {
@@ -251,6 +348,8 @@ private fun SentinelApp(
                         },
                         onOpenReport = { id -> viewModel.openIncident(id) },
                         modifier = content,
+                        imageUrlFor = { incId, attId -> viewModel.attachmentContentUrl(incId, attId) },
+                        authHeader = "Bearer ${viewModel.gatewayApiKey()}",
                     )
                     Tab.RELAY -> RelayScreen(
                         state = relayState,
@@ -265,6 +364,8 @@ private fun SentinelApp(
                         onFilter = { viewModel.setFilter(it) },
                         onOpen = { id -> viewModel.openIncident(id) },
                         modifier = content,
+                        imageUrlFor = { incId, attId -> viewModel.attachmentContentUrl(incId, attId) },
+                        authHeader = "Bearer ${viewModel.gatewayApiKey()}",
                     )
                 }
             }
@@ -273,15 +374,39 @@ private fun SentinelApp(
                     aiAvailable = reporterState.aiAvailable,
                     suggestion = Pair("Recommended Priority", listOf("P1 Urgent based on high impact", "Text will synchronize before attachments")),
                     submitting = false,
-                    // Feature: Audio Transfer — a voice note transcribed to text lands here
-                    // and flows through the same report path as anything typed.
                     initialText = transcribedText.orEmpty(),
-                    onRecordVoice = { audioPicker.launch("audio/*") },
+                    onRecordVoice = onRecordVoiceForReport,
+                    isRecordingVoice = isRecordingReportVoice,
+                    onPickPhoto = { newReportImagePicker.launch("image/*") },
+                    photoUri = draftPhotoUri,
+                    onRemovePhoto = {
+                        draftPhotoUri = null
+                        draftPhotoBytes = null
+                        draftPhotoMime = null
+                    },
                     onSubmit = { text, disasterTypes, urgency, peopleCount, shareLocation ->
+                        val pBytes = draftPhotoBytes
+                        val pMime = draftPhotoMime
+                        draftPhotoUri = null
+                        draftPhotoBytes = null
+                        draftPhotoMime = null
                         transcribedText = null
-                        viewModel.submitReport(text, disasterTypes, urgency, 70, peopleCount, shareLocation)
+                        viewModel.submitReport(
+                            text = text,
+                            disasterTypes = disasterTypes,
+                            urgency = urgency,
+                            severity = 70,
+                            peopleCount = peopleCount,
+                            shareLocation = shareLocation,
+                            photoBytes = pBytes,
+                            photoFileName = "report_photo.jpg",
+                            photoMimeType = pMime,
+                        )
                     },
                     onCancel = {
+                        draftPhotoUri = null
+                        draftPhotoBytes = null
+                        draftPhotoMime = null
                         transcribedText = null
                         viewModel.navigateTo(AppScreen.HOME)
                     },
@@ -293,11 +418,12 @@ private fun SentinelApp(
                     SubmissionConfirmationScreen(
                         incident = lastIncident!!,
                         onAddPhoto = {
-                            // Feature: Image Transfer — real photo picker instead of a stub.
                             imagePicker.launch("image/*")
                         },
                         onDone = { viewModel.navigateTo(AppScreen.HOME) },
                         modifier = content,
+                        imageUrlFor = { attId -> viewModel.attachmentContentUrl(lastIncident!!.id, attId) },
+                        authHeader = "Bearer ${viewModel.gatewayApiKey()}",
                     )
                 } else {
                     viewModel.navigateTo(AppScreen.HOME)
@@ -305,6 +431,8 @@ private fun SentinelApp(
             }
             AppScreen.INCIDENT_DETAIL -> {
                 if (selectedIncident != null) {
+                    val notes by viewModel.selectedIncidentNotes.collectAsState()
+                    val noteDraft by viewModel.noteDraft.collectAsState()
                     IncidentDetailScreen(
                         incident = selectedIncident!!,
                         recommendations = emptyList(),
@@ -317,6 +445,17 @@ private fun SentinelApp(
                             viewModel.attachmentContentUrl(selectedIncident!!.id, attId)
                         },
                         authHeader = "Bearer ${viewModel.gatewayApiKey()}",
+                        // Feature: Coordinator Notes — live recording, transcribed and
+                        // reviewed before it's saved.
+                        notes = notes,
+                        noteDraft = noteDraft,
+                        isRecordingNote = isRecordingNoteVoice,
+                        onStartVoiceNote = onStartNoteRecording,
+                        onStopVoiceNote = onStopNoteRecording,
+                        onStartTextNote = { viewModel.startTextNoteDraft() },
+                        onNoteDraftTextChange = { viewModel.updateNoteDraftText(it) },
+                        onSaveNoteDraft = { viewModel.saveNoteDraft() },
+                        onCancelNoteDraft = { viewModel.cancelNoteDraft() },
                     )
                 } else {
                     viewModel.navigateTo(AppScreen.HOME)

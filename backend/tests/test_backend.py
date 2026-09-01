@@ -423,6 +423,77 @@ def test_clusters_are_provisional_and_splittable(client):
         assert client.get("/v1/incidents", headers=COORDINATOR).json()["total"] == 2
 
 
+def test_duplicate_reports_are_clustered_automatically_on_create(client):
+    """Two near-identical reports (same text, same location, same moment) are the
+    strongest possible similarity signal — clustering must run on creation, not
+    only when a human manually calls /v1/clusters/rebuild."""
+    first = create(client).json()["id"]
+    second = create(client).json()["id"]
+
+    first_doc = client.get(f"/v1/incidents/{first}", headers=COORDINATOR).json()["incident"]
+    second_doc = client.get(f"/v1/incidents/{second}", headers=COORDINATOR).json()["incident"]
+    assert first_doc["cluster_id"] is not None
+    assert first_doc["cluster_id"] == second_doc["cluster_id"]
+
+    clusters = client.get("/v1/clusters", headers=COORDINATOR).json()["items"]
+    matching = [c for c in clusters if c["id"] == first_doc["cluster_id"]]
+    assert len(matching) == 1  # never spawns a second overlapping cluster
+    assert set(matching[0]["incident_ids"]) == {first, second}
+
+
+def test_third_similar_report_joins_the_existing_cluster(client):
+    """A cluster already exists when a third matching report arrives — it must
+    join the same cluster row, not create a competing duplicate cluster."""
+    first = create(client).json()["id"]
+    second = create(client).json()["id"]
+    third = create(client).json()["id"]
+
+    clusters = client.get("/v1/clusters", headers=COORDINATOR).json()["items"]
+    relevant = [c for c in clusters if {first, second, third} & set(c["incident_ids"])]
+    assert len(relevant) == 1
+    assert set(relevant[0]["incident_ids"]) == {first, second, third}
+
+
+def test_coordinator_note_is_persisted_and_audited(client):
+    incident_id = create(client).json()["id"]
+    added = client.post(
+        f"/v1/incidents/{incident_id}/notes",
+        json={"text": "Family confirmed safe, one still unaccounted for.", "source": "voice"},
+        headers=COORDINATOR,
+    )
+    assert added.status_code == 201
+    assert added.json()["source"] == "voice"
+
+    detail = client.get(f"/v1/incidents/{incident_id}", headers=COORDINATOR).json()
+    assert len(detail["notes"]) == 1
+    assert detail["notes"][0]["text"] == "Family confirmed safe, one still unaccounted for."
+
+    actions = [
+        e["action"] for e in client.get("/v1/audit", headers=AUTHORITY).json()["items"]
+    ]
+    assert "INCIDENT_NOTE_ADDED" in actions
+
+
+def test_note_blank_text_is_rejected(client):
+    incident_id = create(client).json()["id"]
+    response = client.post(
+        f"/v1/incidents/{incident_id}/notes",
+        json={"text": "   "},
+        headers=COORDINATOR,
+    )
+    assert response.status_code == 422
+
+
+def test_note_referencing_unknown_attachment_is_rejected(client):
+    incident_id = create(client).json()["id"]
+    response = client.post(
+        f"/v1/incidents/{incident_id}/notes",
+        json={"text": "note", "audio_attachment_id": "att_does_not_exist"},
+        headers=COORDINATOR,
+    )
+    assert response.status_code == 404
+
+
 def test_audit_chain_records_the_workflow(client):
     incident_id = create(client).json()["id"]
     client.post(

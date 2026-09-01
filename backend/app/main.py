@@ -9,12 +9,23 @@ an explicit human confirmation, and nothing here ever contacts a real emergency 
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import (
+    Body,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func
@@ -46,11 +57,13 @@ from .db import (  # noqa: E402
     ClusterRow,
     DispatchRow,
     IdempotencyRow,
+    IncidentNoteRow,
     IncidentRow,
     ResourceRow,
     get_session,
     init_db,
 )
+from .realtime import manager as realtime_manager  # noqa: E402
 from .schemas import (  # noqa: E402
     AcknowledgeRequest,
     AlertCreate,
@@ -59,6 +72,7 @@ from .schemas import (  # noqa: E402
     DispatchAdvance,
     DispatchCreate,
     IncidentCreate,
+    IncidentNoteCreate,
     NodeHeartbeat,
     Page,
     ResourceCreate,
@@ -227,11 +241,12 @@ def _seed_demo_nodes() -> None:
 
 
 @app.on_event("startup")
-def startup() -> None:
+async def startup() -> None:
     init_db()
     if not settings.is_production:
         _seed_demo_resources()
         _seed_demo_nodes()
+    realtime_manager.set_loop(asyncio.get_running_loop())
 
 
 @app.get("/")
@@ -239,6 +254,31 @@ def startup() -> None:
 @app.get("/v1/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok", "service": "DisasterMesh Sentinel Gateway"}
+
+
+@app.websocket("/v1/ws/incidents")
+async def incidents_socket(websocket: WebSocket, token: str = Query(default="")) -> None:
+    """Push channel: every message is `{"type": ..., "incident_id": ...}` — a
+    signal to refetch, never a data payload, so the client's own REST GET stays
+    the single source of truth. A browser WebSocket can't send a bearer header,
+    so auth is a query-string token checked the same way the HTTP bearer token
+    resolves a principal.
+    """
+    entry = api_keys().get(token)
+    if entry is None:
+        await websocket.close(code=4401)
+        return
+    _, _, organization_id = entry
+    await realtime_manager.connect(organization_id, websocket)
+    try:
+        while True:
+            # This channel is server-to-client only; drain and discard anything
+            # the client sends (including pings) so the socket never backs up.
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        realtime_manager.disconnect(organization_id, websocket)
 
 
 @app.exception_handler(HTTPException)
@@ -406,6 +446,90 @@ def _incident_payload(row: IncidentRow, principal: Principal) -> dict[str, Any]:
     return doc
 
 
+def _apply_clustering(db: Session, principal: Principal, target_row: IncidentRow) -> str | None:
+    """Evaluate whether `target_row` groups with existing incidents.
+
+    Reuses the existing, tested `dms.ai.clustering` engine as-is — this never
+    merges or hides a report; it only sets `cluster_id` so the dashboard can
+    surface a human-reviewable "similar reports" badge, exactly like the
+    already-existing manual `/v1/clusters/rebuild` endpoint, just triggered
+    automatically on every new incident instead of only on demand.
+
+    `IncidentCluster.id` is randomly generated per call (see
+    `dms.domain.models.IncidentCluster`), so a naive re-run would spawn an
+    overlapping duplicate cluster every time a new incident joins an existing
+    group — this reuses an existing ClusterRow when its membership overlaps,
+    instead of creating a new one each time.
+    """
+    from dms.store.sqlite import _incident_from_doc
+
+    other_rows = (
+        db.query(IncidentRow)
+        .filter(
+            IncidentRow.organization_id == principal.organization_id,
+            IncidentRow.id != target_row.id,
+        )
+        .all()
+    )
+    try:
+        target_incident = _incident_from_doc(target_row.doc)
+    except Exception:
+        return None
+    other_incidents = []
+    for r in other_rows:
+        try:
+            other_incidents.append(_incident_from_doc(r.doc))
+        except Exception:
+            continue
+
+    group = build_cluster(target_incident, other_incidents)
+    if group is None:
+        return None
+
+    member_ids = set(group.incident_ids)
+    existing_clusters = (
+        db.query(ClusterRow).filter(ClusterRow.organization_id == principal.organization_id).all()
+    )
+    reused = next(
+        (c for c in existing_clusters if member_ids & set(c.doc.get("incident_ids", []))),
+        None,
+    )
+
+    doc = group.to_dict()
+    if reused is not None:
+        doc["id"] = reused.id
+        doc["incident_ids"] = sorted(set(reused.doc.get("incident_ids", [])) | member_ids)
+        reused.doc = doc
+        cluster_id = reused.id
+    else:
+        db.add(
+            ClusterRow(
+                id=group.id,
+                organization_id=principal.organization_id,
+                doc=doc,
+                human_reviewed=False,
+            )
+        )
+        cluster_id = group.id
+
+    # The API's `incident.cluster_id` field is read from the JSON `doc` blob
+    # (see `_incident_payload`), not the ORM column alone — both must be kept
+    # in sync or the dashboard would never see the id that was just set.
+    member_rows = (
+        db.query(IncidentRow)
+        .filter(
+            IncidentRow.id.in_(doc["incident_ids"]),
+            IncidentRow.organization_id == principal.organization_id,
+        )
+        .all()
+    )
+    for member in member_rows:
+        member.cluster_id = cluster_id
+        member.doc = {**member.doc, "cluster_id": cluster_id}
+
+    return cluster_id
+
+
 # -------------------------------------------------------------------- health
 
 
@@ -497,6 +621,8 @@ def create_incident(
         updated_at=now,
     )
     db.add(row)
+    db.flush()  # cluster lookup below queries IncidentRow, so this row must be visible first
+    cluster_id = _apply_clustering(db, principal, row)
     audit(
         db,
         action="INCIDENT_CREATED",
@@ -505,11 +631,15 @@ def create_incident(
         detail={
             "priority_class": payload.priority_class.value,
             "priority_score": payload.priority_score,
+            "cluster_id": cluster_id,
         },
     )
     response = {"id": incident_id, "status": row.status, "deduplicated": False}
     _remember(db, idempotency_key, "create_incident", principal, response)
     db.commit()
+    realtime_manager.broadcast_from_sync(
+        principal.organization_id, {"type": "incident_created", "incident_id": incident_id}
+    )
     return response
 
 
@@ -520,13 +650,14 @@ def _classify_text(text: str, language: str | None) -> dict:
     message typed or transcribed on the dashboard is classified exactly like one
     created on a device. Returns fields ready for :class:`IncidentCreate`.
     """
+    from dms.ai import get_triage_model
     from dms.ai.lexicon import detect_language
-    from dms.ai.rules import extract_entities, triage
+    from dms.ai.rules import extract_entities
     from dms.domain.models import Condition, ConditionType, Quantity
     from dms.priority.engine import PriorityInputs, evaluate
 
     lang = language or detect_language(text)
-    tri = triage(text, lang)
+    tri = get_triage_model().triage(text, lang)
     entity = extract_entities(text, lang)
     people = entity.people_affected
     conditions = tuple(
@@ -691,6 +822,12 @@ def get_incident(
 ) -> dict:
     row = _scoped_incident(db, incident_id, principal)
     attachments = db.query(AttachmentRow).filter(AttachmentRow.incident_id == incident_id).all()
+    notes = (
+        db.query(IncidentNoteRow)
+        .filter(IncidentNoteRow.incident_id == incident_id)
+        .order_by(IncidentNoteRow.created_at.asc())
+        .all()
+    )
     return {
         "incident": _incident_payload(row, principal),
         "status": row.status,
@@ -709,6 +846,18 @@ def get_incident(
         ],
         "dispatch": [
             d.doc for d in db.query(DispatchRow).filter(DispatchRow.incident_id == incident_id)
+        ],
+        "notes": [
+            {
+                "id": n.id,
+                "incident_id": n.incident_id,
+                "author_user_id": n.author_user_id,
+                "text": n.text,
+                "source": n.source,
+                "audio_attachment_id": n.audio_attachment_id,
+                "created_at": n.created_at.isoformat(),
+            }
+            for n in notes
         ],
     }
 
@@ -749,6 +898,9 @@ def acknowledge(
     response = {"id": row.id, "status": row.status, "already_acknowledged": False}
     _remember(db, idempotency_key, "acknowledge", principal, response)
     db.commit()
+    realtime_manager.broadcast_from_sync(
+        principal.organization_id, {"type": "incident_acknowledged", "incident_id": incident_id}
+    )
     return response
 
 
@@ -783,6 +935,9 @@ def update_status(
         detail={"reason": payload.reason},
     )
     db.commit()
+    realtime_manager.broadcast_from_sync(
+        principal.organization_id, {"type": "incident_status_changed", "incident_id": incident_id}
+    )
     return {"id": row.id, "status": row.status}
 
 
@@ -842,6 +997,13 @@ def add_attachment(
         # Hash matched the declared digest — the file is intact.
         verified = True
 
+    inc_row = _scoped_incident(db, incident_id, principal)
+    att_ids = list(inc_row.doc.get("attachment_ids", []))
+    if attachment_id not in att_ids:
+        att_ids.append(attachment_id)
+    inc_row.doc = {**inc_row.doc, "attachment_ids": att_ids}
+    inc_row.updated_at = datetime.now(UTC)
+
     db.add(
         AttachmentRow(
             id=attachment_id,
@@ -864,7 +1026,74 @@ def add_attachment(
         detail={"attachment_id": attachment_id, "sha256": payload.sha256[:12]},
     )
     db.commit()
+    realtime_manager.broadcast_from_sync(
+        principal.organization_id, {"type": "attachment_added", "incident_id": incident_id, "attachment_id": attachment_id}
+    )
     return {"id": attachment_id, "deduplicated": False, "has_content": data is not None}
+
+
+# --------------------------------------------------------------------- notes
+
+
+@app.post("/v1/incidents/{incident_id}/notes", status_code=201, tags=["incidents"])
+def add_note(
+    incident_id: str,
+    payload: IncidentNoteCreate,
+    principal: Principal = Depends(require(Permission.VIEW_INCIDENT)),
+    db: Session = Depends(get_session),
+) -> dict:
+    """A durable, listable follow-up note — typed, or transcribed voice that a
+    human reviewed and confirmed first. Distinct from `AcknowledgeRequest.note`,
+    which is transient and folded into the audit log only.
+    """
+    _scoped_incident(db, incident_id, principal)
+    if payload.audio_attachment_id is not None:
+        attachment = (
+            db.query(AttachmentRow)
+            .filter(
+                AttachmentRow.id == payload.audio_attachment_id,
+                AttachmentRow.incident_id == incident_id,
+                AttachmentRow.organization_id == principal.organization_id,
+            )
+            .first()
+        )
+        if attachment is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "not_found", "detail": "audio_attachment_id not found on this incident"},
+            )
+
+    note_id = new_id("note")
+    row = IncidentNoteRow(
+        id=note_id,
+        incident_id=incident_id,
+        organization_id=principal.organization_id,
+        author_user_id=principal.user_id,
+        text=payload.text,
+        source=payload.source,
+        audio_attachment_id=payload.audio_attachment_id,
+    )
+    db.add(row)
+    audit(
+        db,
+        action="INCIDENT_NOTE_ADDED",
+        principal=principal,
+        incident_id=incident_id,
+        detail={"note_id": note_id, "source": payload.source},
+    )
+    db.commit()
+    realtime_manager.broadcast_from_sync(
+        principal.organization_id, {"type": "incident_note_added", "incident_id": incident_id}
+    )
+    return {
+        "id": note_id,
+        "incident_id": incident_id,
+        "author_user_id": principal.user_id,
+        "text": payload.text,
+        "source": payload.source,
+        "audio_attachment_id": payload.audio_attachment_id,
+        "created_at": row.created_at.isoformat(),
+    }
 
 
 def _binascii_error() -> type[Exception]:
@@ -1217,6 +1446,10 @@ def create_dispatch(
     response = {"id": order_id, "status": DispatchStatus.ASSIGNED.value, "simulated": True}
     _remember(db, idempotency_key, "create_dispatch", principal, response)
     db.commit()
+    realtime_manager.broadcast_from_sync(
+        principal.organization_id,
+        {"type": "dispatch_created", "incident_id": payload.incident_id},
+    )
     return response
 
 

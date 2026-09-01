@@ -23,9 +23,9 @@ from fastapi.responses import JSONResponse
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "protocol"))
 
-from dms.ai import mocks  # noqa: E402
+from dms.ai import get_triage_model, mocks  # noqa: E402
 from dms.ai.base import AIError  # noqa: E402
-from dms.ai.rules import extract_entities, triage  # noqa: E402
+from dms.ai.rules import extract_entities  # noqa: E402
 
 from .config import settings  # noqa: E402
 from .registry import models_loaded, registry  # noqa: E402
@@ -122,7 +122,7 @@ def list_models() -> dict:
 @app.post("/v1/triage")
 def post_triage(request: TextRequest):
     """Classify urgency, disaster types, and severity. A recommendation only."""
-    result = triage(request.text, request.language)
+    result = get_triage_model().triage(request.text, request.language)
     return result.to_dict() | {"advisory": "recommendation_only_not_a_dispatch"}
 
 

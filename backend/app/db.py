@@ -87,6 +87,23 @@ class AttachmentRow(Base):
     data = Column(LargeBinary, nullable=True)
 
 
+class IncidentNoteRow(Base):
+    """A durable, listable follow-up note on an incident — distinct from a
+    one-off transient acknowledge note. Voice notes keep the raw audio as a
+    real AttachmentRow (kind AUDIO) for provenance; this row is the reviewed,
+    possibly-edited text plus a pointer back to that attachment."""
+
+    __tablename__ = "incident_notes"
+    id = Column(String, primary_key=True)
+    incident_id = Column(String, ForeignKey("incidents.id"), index=True, nullable=False)
+    organization_id = Column(String, index=True, nullable=False)
+    author_user_id = Column(String, nullable=True)
+    text = Column(Text, nullable=False)
+    source = Column(String, nullable=False, default="text")  # "text" | "voice"
+    audio_attachment_id = Column(String, ForeignKey("attachments.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=_now)
+
+
 class ClassificationRow(Base):
     __tablename__ = "classifications"
     id = Column(String, primary_key=True)

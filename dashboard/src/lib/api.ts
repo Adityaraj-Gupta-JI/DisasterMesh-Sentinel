@@ -48,6 +48,7 @@ export const IncidentSchema = z.object({
   reported_at: z.string(),
   updated_at: z.string(),
   redacted: z.array(z.string()).optional(),
+  cluster_id: z.string().nullable().optional(),
 });
 export type Incident = z.infer<typeof IncidentSchema>;
 
@@ -80,13 +81,36 @@ export const DispatchSchema = z.object({
 });
 export type DispatchOrder = z.infer<typeof DispatchSchema>;
 
+export const NoteSchema = z.object({
+  id: z.string(),
+  incident_id: z.string(),
+  author_user_id: z.string().nullable().optional(),
+  text: z.string(),
+  source: z.enum(["text", "voice"]),
+  audio_attachment_id: z.string().nullable().optional(),
+  created_at: z.string(),
+});
+export type IncidentNote = z.infer<typeof NoteSchema>;
+
 export const IncidentDetailSchema = z.object({
   incident: IncidentSchema,
   status: z.string(),
   attachments: z.array(AttachmentSchema),
   dispatch: z.array(DispatchSchema),
+  notes: z.array(NoteSchema).default([]),
 });
 export type IncidentDetail = z.infer<typeof IncidentDetailSchema>;
+
+export const ClusterSchema = z.object({
+  id: z.string(),
+  incident_ids: z.array(z.string()),
+  decision: z.string(),
+  similarity: z.number(),
+  provisional: z.boolean(),
+  human_reviewed: z.boolean(),
+  rationale: z.array(z.string()).default([]),
+});
+export type IncidentCluster = z.infer<typeof ClusterSchema>;
 
 export const RecommendationSchema = z.object({
   resource_id: z.string(),
@@ -268,6 +292,20 @@ export const api = {
         body: JSON.stringify({ incident_id: incidentId, resource_id: resourceId, reason }),
       },
     ),
+  addNote: (incidentId: string, text: string, source: "text" | "voice", audioAttachmentId?: string) =>
+    request(`/v1/incidents/${incidentId}/notes`, NoteSchema, {
+      method: "POST",
+      body: JSON.stringify({ text, source, audio_attachment_id: audioAttachmentId ?? null }),
+    }),
+  listClusters: () =>
+    request("/v1/clusters", z.object({ items: z.array(ClusterSchema) })).catch(() => ({
+      items: [] as IncidentCluster[],
+    })),
+  splitCluster: (clusterId: string, incidentId: string) =>
+    request(`/v1/clusters/${clusterId}/split`, ClusterSchema, {
+      method: "POST",
+      body: JSON.stringify({ incident_id: incidentId }),
+    }),
 };
 
 // --- Media: attachment bytes, and audio → text → incident ---------------------

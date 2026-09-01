@@ -2,16 +2,15 @@
  * Report composer — the "sender" side.
  *
  * Text and transcribed audio both go through the existing incident pipeline
- * (`/v1/compose`, which classifies and files exactly like a device). Images are
- * attached to the created incident with their bytes, so the coordinator sees the
- * real photo. Audio is turned into text by the existing speech-to-text endpoint
- * and then dropped into the same text box — it becomes an ordinary message.
+ * (`/v1/compose`). Images are attached to the created incident with their bytes.
+ * Audio is turned into text by the existing speech-to-text endpoint.
  *
- * This panel is purely additive: it calls existing endpoints and never changes how
- * text messages already flow.
+ * This panel is purely additive: it calls existing endpoints and never changes
+ * how text messages already flow.
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
 
+import { useVoiceRecorder } from "../hooks/useVoiceRecorder";
 import { ApiError, media, sha256Hex, toBase64 } from "../lib/api";
 
 const ALLOWED_IMAGE = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -25,9 +24,10 @@ export function ComposePanel({ onSent }: { onSent: () => void }) {
   const [message, setMessage] = useState<string | null>(null);
   const [image, setImage] = useState<{ file: File; url: string } | null>(null);
 
-  const [recording, setRecording] = useState(false);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const { recording, start: startRecording, stop: stopRecording } = useVoiceRecorder(
+    (blob) => { void transcribe(blob); },
+    (msg) => { setPhase("error"); setMessage(msg); },
+  );
 
   const reset = () => {
     setText("");
@@ -38,7 +38,7 @@ export function ComposePanel({ onSent }: { onSent: () => void }) {
   const pickImage = (e: React.ChangeEvent<HTMLInputElement>) => {
     setMessage(null);
     const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-selecting the same file
+    e.target.value = "";
     if (!file) return;
     if (!ALLOWED_IMAGE.has(file.type)) {
       setPhase("error");
@@ -64,9 +64,7 @@ export function ComposePanel({ onSent }: { onSent: () => void }) {
     setPhase("sending");
     setMessage(image ? "Filing report and uploading image…" : "Filing report…");
     try {
-      // 1) The text goes through the exact existing pipeline.
       const { id } = await media.compose(text.trim());
-      // 2) If there's an image, attach its bytes to that incident.
       if (image) {
         const buffer = await image.file.arrayBuffer();
         await media.uploadAttachment(id, {
@@ -88,32 +86,6 @@ export function ComposePanel({ onSent }: { onSent: () => void }) {
     }
   };
 
-  const startRecording = async () => {
-    setMessage(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      chunksRef.current = [];
-      recorder.ondataavailable = (ev) => ev.data.size && chunksRef.current.push(ev.data);
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        await transcribe(blob);
-      };
-      recorderRef.current = recorder;
-      recorder.start();
-      setRecording(true);
-    } catch {
-      setPhase("error");
-      setMessage("Microphone unavailable. You can pick an audio file instead.");
-    }
-  };
-
-  const stopRecording = () => {
-    recorderRef.current?.stop();
-    setRecording(false);
-  };
-
   const pickAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -125,15 +97,12 @@ export function ComposePanel({ onSent }: { onSent: () => void }) {
     setMessage("Transcribing audio…");
     try {
       const buffer = await blob.arrayBuffer();
-      // The speech-to-text endpoint requires an audio/* type; recorder output
-      // (often audio/webm) is normalised to a container the pipeline accepts.
       const result = await media.transcribe(toBase64(buffer), "audio/ogg");
       if (!result.text) {
         setPhase("idle");
         setMessage("Could not make out speech — please type the report.");
         return;
       }
-      // The transcript becomes ordinary editable text, then sends as a text message.
       setText((prev) => (prev ? `${prev} ${result.text}` : result.text));
       setPhase("idle");
       setMessage(`Transcribed (${result.language}). Review, then send.`);
@@ -147,29 +116,45 @@ export function ComposePanel({ onSent }: { onSent: () => void }) {
 
   return (
     <div className="compose">
-      <h2>New report</h2>
+      {/* Editorial eyebrow + heading */}
+      <p className="compose-eyebrow">Field Transmission</p>
+      <h2>New Report</h2>
       <p className="compose-hint">
-        Type a message, record a voice note (it is transcribed to text), and optionally attach a
-        photo. Everything is filed through the normal incident pipeline.
+        Type a message, record a voice note (it is transcribed to text), and optionally
+        attach a photo. Everything is filed through the normal incident pipeline.
       </p>
 
+      {/* Report text */}
       <textarea
         className="compose-text"
         placeholder="Describe the emergency…"
         value={text}
         onChange={(e) => setText(e.target.value)}
-        rows={4}
+        rows={5}
         disabled={busy}
       />
 
+      {/* Action bar */}
       <div className="compose-actions">
         {!recording ? (
-          <button onClick={startRecording} disabled={busy}>
+          <button
+            className="compose-capture-btn"
+            onClick={startRecording}
+            disabled={busy}
+          >
             ● Record voice
           </button>
         ) : (
-          <button onClick={stopRecording} className="recording">
-            ■ Stop recording
+          <button
+            className="compose-capture-btn recording"
+            onClick={stopRecording}
+          >
+            <span style={{
+              display: "inline-block",
+              width: 8, height: 8, borderRadius: "50%",
+              background: "currentColor", marginRight: 4,
+            }} />
+            RECORDING · Stop
           </button>
         )}
 
@@ -183,12 +168,18 @@ export function ComposePanel({ onSent }: { onSent: () => void }) {
           <input type="file" accept="image/*" onChange={pickImage} disabled={busy} hidden />
         </label>
 
-        <div className="spacer" />
-        <button className="compose-send" onClick={send} disabled={busy}>
-          {phase === "sending" ? "Sending…" : "Send report"}
+        <div className="spacer" style={{ flex: 1 }} />
+
+        <button
+          className="compose-send"
+          onClick={send}
+          disabled={busy}
+        >
+          {phase === "sending" ? "Transmitting…" : "Transmit Report"}
         </button>
       </div>
 
+      {/* Image preview */}
       {image && (
         <div className="compose-preview">
           <img src={image.url} alt="attachment preview" />
@@ -204,6 +195,15 @@ export function ComposePanel({ onSent }: { onSent: () => void }) {
         </div>
       )}
 
+      {/* Transmission state */}
+      {phase === "sending" && (
+        <div className="compose-transmitting">
+          <span className="transmit-dot" />
+          TRANSMITTING TO MESH…
+        </div>
+      )}
+
+      {/* Status message */}
       {message && (
         <p className={phase === "error" ? "error" : "compose-status"}>
           {message}

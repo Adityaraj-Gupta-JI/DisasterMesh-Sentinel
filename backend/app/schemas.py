@@ -24,6 +24,7 @@ ALLOWED_MIME = {
     "audio/mpeg",
     "audio/mp4",
     "audio/ogg",
+    "audio/webm",  # MediaRecorder's default output in Chromium browsers
     "application/pdf",
     "text/plain",
 }
@@ -87,6 +88,36 @@ class Page(BaseModel):
 class AcknowledgeRequest(BaseModel):
     node_id: str = Field(min_length=1, max_length=64)
     note: str | None = Field(default=None, max_length=500)
+
+
+class IncidentNoteCreate(BaseModel):
+    """A durable coordinator note — typed, or transcribed-then-reviewed voice.
+
+    The transcription itself is never trusted blindly: the dashboard shows it
+    in an editable box first, so `text` here is always what a human confirmed,
+    not raw model output.
+    """
+
+    text: str = Field(min_length=1, max_length=MAX_TEXT)
+    source: Literal["text", "voice"] = "text"
+    audio_attachment_id: str | None = None
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("text must not be blank")
+        return value
+
+
+class IncidentNoteOut(BaseModel):
+    id: str
+    incident_id: str
+    author_user_id: str | None = None
+    text: str
+    source: str
+    audio_attachment_id: str | None = None
+    created_at: datetime
 
 
 class StatusUpdate(BaseModel):

@@ -30,6 +30,24 @@ enum class AppScreen {
     HOME, NEW_REPORT, CONFIRMATION, INCIDENT_DETAIL, SETTINGS
 }
 
+/** A durable, listable follow-up note — typed, or transcribed voice a human
+ * reviewed and confirmed first. Gateway-only: not carried over the mesh. */
+data class NoteUi(
+    val id: String,
+    val text: String,
+    val source: String,
+    val audioAttachmentId: String?,
+)
+
+/** The in-progress note being recorded/typed, before it's saved — never
+ * auto-committed, always reviewed by a human first. */
+data class NoteDraft(
+    val text: String = "",
+    val source: String = "text",
+    val audioAttachmentId: String? = null,
+    val busy: Boolean = false,
+)
+
 class AppViewModel(
     val repository: SentinelRepository,
 ) : ViewModel() {
@@ -51,6 +69,12 @@ class AppViewModel(
 
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage = _statusMessage.asStateFlow()
+
+    private val _selectedIncidentNotes = MutableStateFlow<List<NoteUi>>(emptyList())
+    val selectedIncidentNotes = _selectedIncidentNotes.asStateFlow()
+
+    private val _noteDraft = MutableStateFlow<NoteDraft?>(null)
+    val noteDraft = _noteDraft.asStateFlow()
 
     val reporterState: StateFlow<ReporterState> = combine(
         repository.isOnline,
@@ -122,6 +146,86 @@ class AppViewModel(
     fun openIncident(id: String) {
         _selectedIncidentId.value = id
         _currentScreen.value = AppScreen.INCIDENT_DETAIL
+        _noteDraft.value = null
+        loadNotesForSelected()
+    }
+
+    /** Notes are gateway-only (like recommendations already are) — a
+     * coordinator reviewing an incident closely enough to leave a follow-up
+     * note is, by nature, at a screen with the gateway reachable. */
+    fun loadNotesForSelected() {
+        val id = _selectedIncidentId.value ?: return
+        viewModelScope.launch {
+            val result = repository.gatewayClient.getIncidentNotes(id)
+            _selectedIncidentNotes.value = result.getOrNull()?.map {
+                NoteUi(id = it.id, text = it.text, source = it.source, audioAttachmentId = it.audioAttachmentId)
+            } ?: emptyList()
+        }
+    }
+
+    fun startTextNoteDraft() {
+        _noteDraft.value = NoteDraft(source = "text")
+    }
+
+    fun updateNoteDraftText(text: String) {
+        _noteDraft.value = _noteDraft.value?.copy(text = text)
+    }
+
+    fun cancelNoteDraft() {
+        _noteDraft.value = null
+    }
+
+    /**
+     * The recorded audio is uploaded and kept as a real attachment first,
+     * regardless of what happens next — then transcribed into an editable
+     * draft the coordinator reviews before anything is saved. A failure at
+     * any point still leaves the audio saved and the draft open for typing.
+     */
+    fun recordVoiceNoteForSelected(bytes: ByteArray, mimeType: String) {
+        val incidentId = _selectedIncidentId.value ?: return
+        _noteDraft.value = NoteDraft(source = "voice", busy = true)
+        viewModelScope.launch {
+            val upload = repository.gatewayClient.uploadAudioAttachment(
+                incidentId, bytes, "note_${System.currentTimeMillis()}.m4a", mimeType,
+            )
+            val attachmentId = upload.getOrNull()
+            _noteDraft.value = _noteDraft.value?.copy(audioAttachmentId = attachmentId)
+
+            val transcript = repository.gatewayClient.transcribeAudio(bytes, mimeType).getOrNull()
+            _noteDraft.value = _noteDraft.value?.copy(
+                text = transcript.orEmpty(),
+                busy = false,
+            )
+            if (transcript.isNullOrBlank()) {
+                _statusMessage.value = if (attachmentId != null) {
+                    "Could not make out speech — audio saved, type the note instead."
+                } else {
+                    "Recording failed to save — please try again or type the note."
+                }
+            }
+        }
+    }
+
+    fun saveNoteDraft() {
+        val incidentId = _selectedIncidentId.value ?: return
+        val draft = _noteDraft.value ?: return
+        if (draft.text.isBlank()) {
+            _statusMessage.value = "The note is empty."
+            return
+        }
+        _noteDraft.value = draft.copy(busy = true)
+        viewModelScope.launch {
+            val result = repository.gatewayClient.addNote(
+                incidentId, draft.text.trim(), draft.source, draft.audioAttachmentId,
+            )
+            if (result.isSuccess) {
+                _noteDraft.value = null
+                loadNotesForSelected()
+            } else {
+                _noteDraft.value = draft.copy(busy = false)
+                _statusMessage.value = "Could not save the note — check the connection and retry."
+            }
+        }
     }
 
     fun sendSos() {
@@ -148,6 +252,9 @@ class AppViewModel(
         severity: Int = 50,
         peopleCount: Int? = null,
         shareLocation: Boolean = true,
+        photoBytes: ByteArray? = null,
+        photoFileName: String? = null,
+        photoMimeType: String? = null,
     ) {
         viewModelScope.launch {
             val incident = repository.createReport(
@@ -161,6 +268,14 @@ class AppViewModel(
             )
             _lastSubmittedIncident.value = incident
             _currentScreen.value = AppScreen.CONFIRMATION
+
+            if (photoBytes != null && photoBytes.isNotEmpty()) {
+                uploadPhotoForLastIncident(
+                    photoBytes,
+                    photoFileName ?: "report_photo.jpg",
+                    photoMimeType ?: "image/jpeg",
+                )
+            }
         }
     }
 
@@ -172,11 +287,25 @@ class AppViewModel(
     fun uploadPhotoForLastIncident(bytes: ByteArray, fileName: String, mimeType: String) {
         val incident = _lastSubmittedIncident.value ?: return
         viewModelScope.launch {
+            // If online, ensure incident is submitted to gateway before attaching
+            if (repository.isOnline.value) {
+                repository.gatewayClient.submitIncident(incident)
+            }
             val result = repository.gatewayClient.uploadImageAttachment(
                 incident.id, bytes, fileName, mimeType,
             )
-            _statusMessage.value =
-                if (result.isSuccess) "Photo attached to report" else "Photo will sync when online"
+            if (result.isSuccess) {
+                val attId = result.getOrNull()
+                if (attId != null && attId.isNotBlank()) {
+                    repository.addAttachmentToIncident(incident.id, attId)
+                    _lastSubmittedIncident.value = incident.copy(
+                        attachmentIds = incident.attachmentIds + attId
+                    )
+                }
+                _statusMessage.value = "Photo attached to report"
+            } else {
+                _statusMessage.value = "Photo will sync when online"
+            }
         }
     }
 

@@ -67,6 +67,7 @@ class SentinelRepository(
 
     private var activeTransport: Transport? = null
     private val connectedEndpoints = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private var realtimeSocket: okhttp3.WebSocket? = null
 
     val allIncidents: Flow<List<Incident>> = database.incidents().observeQueue().map { list ->
         list.map { it.toDomain() }
@@ -119,6 +120,15 @@ class SentinelRepository(
                 nearbyPeers = _nearbyPeersCount.value,
                 storedBundles = bundleCount,
             )
+            // The 10s poll above stays as the fallback either way — a dropped
+            // socket degrades sync to "a bit slower," never silent. Only open
+            // a new one when the previous one (if any) is actually gone.
+            if (realtimeSocket == null) {
+                realtimeSocket = gatewayClient.connectRealtime(
+                    onEvent = { scope.launch { syncWithGateway() } },
+                    onDisconnected = { realtimeSocket = null },
+                )
+            }
         }
         return online
     }
@@ -291,6 +301,21 @@ class SentinelRepository(
         var pushed = 0
         var pulled = 0
 
+        // Push local queued incidents to Gateway
+        try {
+            val queued = database.incidents().queuedIncidents().map { it.toDomain() }
+            if (queued.isNotEmpty()) {
+                val pushRes = gatewayClient.pushSync(nodeId, queued)
+                if (pushRes.isSuccess) {
+                    pushed = pushRes.getOrNull()?.first ?: 0
+                    queued.forEach { inc ->
+                        val updated = inc.copy(status = IncidentStatus.RECEIVED)
+                        database.incidents().upsert(updated.toEntity())
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
         // Pull remote incidents from Gateway
         try {
             val remote = gatewayClient.pullSync()
@@ -302,6 +327,15 @@ class SentinelRepository(
         } catch (_: Exception) {}
 
         return SyncSummary(pushed, pulled, true)
+    }
+
+    suspend fun addAttachmentToIncident(incidentId: String, attachmentId: String) {
+        val existing = database.incidents().byId(incidentId) ?: return
+        val domain = existing.toDomain()
+        if (!domain.attachmentIds.contains(attachmentId)) {
+            val updated = domain.copy(attachmentIds = domain.attachmentIds + attachmentId)
+            database.incidents().upsert(updated.toEntity())
+        }
     }
 
     fun attachTransport(transport: Transport) {
@@ -458,6 +492,15 @@ class SentinelRepository(
                 }
             }
 
+            val attList = mutableListOf<String>()
+            val attArr = docJson.optJSONArray("attachment_ids")
+            if (attArr != null) {
+                for (i in 0 until attArr.length()) {
+                    val aId = attArr.optString(i)
+                    if (aId.isNotBlank()) attList.add(aId)
+                }
+            }
+
             return Incident(
                 id = id,
                 sourceNodeId = sourceNodeId,
@@ -479,6 +522,7 @@ class SentinelRepository(
                 accessPolicy = AccessPolicy(
                     sensitivity = try { Sensitivity.valueOf(sensitivity) } catch (_: Exception) { Sensitivity.OPERATIONAL }
                 ),
+                attachmentIds = attList,
                 revision = revision,
                 updatedAt = Instant.ofEpochMilli(updatedAt),
             )
@@ -519,6 +563,10 @@ class SentinelRepository(
                 val exp = JSONArray()
                 incident.priorityExplanation.forEach { exp.put(it) }
                 put("priority_explanation", exp)
+
+                val atts = JSONArray()
+                incident.attachmentIds.forEach { atts.put(it) }
+                put("attachment_ids", atts)
             }
             return obj.toString()
         }

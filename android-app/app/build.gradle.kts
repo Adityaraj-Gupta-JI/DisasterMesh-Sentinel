@@ -68,6 +68,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // Image loading for rendering incident photo evidence (Feature: Image Transfer).
     implementation("io.coil-kt:coil-compose:2.7.0")
+    // WebSocket support for the realtime incident-update channel (Feature: Realtime
+    // Push). GatewayClient otherwise hand-rolls HttpURLConnection requests, but
+    // WebSocket framing over a raw socket is real protocol work — this is the
+    // standard, well-tested way to do it on Android.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

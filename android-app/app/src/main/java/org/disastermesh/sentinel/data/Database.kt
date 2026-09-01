@@ -153,6 +153,9 @@ interface IncidentDao {
     @Query("SELECT * FROM incidents WHERE priorityClass = :priority ORDER BY priorityScore DESC")
     fun observeByPriority(priority: String): Flow<List<IncidentEntity>>
 
+    @Query("SELECT * FROM incidents WHERE status = 'QUEUED'")
+    suspend fun queuedIncidents(): List<IncidentEntity>
+
     @Query("SELECT COUNT(*) FROM incidents")
     suspend fun count(): Int
 }

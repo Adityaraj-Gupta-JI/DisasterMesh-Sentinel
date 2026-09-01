@@ -28,6 +28,10 @@ class GatewayClient(
     var baseUrl: String = DEFAULT_BASE_URL,
     var apiKey: String = DEFAULT_API_KEY,
 ) {
+    // Shared across every WebSocket connection this client opens; okhttp's own
+    // pooling/threading makes one long-lived instance the correct lifetime,
+    // not one per call like the raw HttpURLConnection methods below.
+    private val httpClient = okhttp3.OkHttpClient()
 
     suspend fun checkHealth(): Boolean = withContext(Dispatchers.IO) {
         val paths = listOf("/health", "/v1/health", "/")
@@ -98,6 +102,43 @@ class GatewayClient(
         }
     }
 
+    /** A coordinator note as the gateway stores it — mirrors the dashboard's identical shape. */
+    data class IncidentNoteDto(
+        val id: String,
+        val text: String,
+        val source: String,
+        val audioAttachmentId: String?,
+    )
+
+    /**
+     * The app has no other reason to fetch the rich `/v1/incidents/{id}`
+     * detail response (everything else rides the mesh/Room path) — this pulls
+     * just the `notes` array out of it.
+     */
+    suspend fun getIncidentNotes(incidentId: String): Result<List<IncidentNoteDto>> =
+        withContext(Dispatchers.IO) {
+            try {
+                val url = URL("${cleanBaseUrl()}/v1/incidents/$incidentId")
+                val response = getJson(url, apiKey)
+                val notesArr = JSONObject(response).optJSONArray("notes") ?: JSONArray()
+                val list = mutableListOf<IncidentNoteDto>()
+                for (i in 0 until notesArr.length()) {
+                    val n = notesArr.getJSONObject(i)
+                    list.add(
+                        IncidentNoteDto(
+                            id = n.optString("id"),
+                            text = n.optString("text"),
+                            source = n.optString("source", "text"),
+                            audioAttachmentId = n.optString("audio_attachment_id").takeIf { it.isNotBlank() },
+                        )
+                    )
+                }
+                Result.success(list)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
     suspend fun acknowledge(incidentId: String, nodeId: String, note: String?): Result<Boolean> =
         withContext(Dispatchers.IO) {
             try {
@@ -167,6 +208,27 @@ class GatewayClient(
         bytes: ByteArray,
         fileName: String,
         mimeType: String,
+    ): Result<String> = uploadAttachment(incidentId, bytes, fileName, mimeType, kind = "IMAGE")
+
+    /**
+     * Upload a recorded voice note's raw audio as a real attachment — the
+     * provenance copy kept regardless of whether transcription succeeds.
+     * MediaRecorder's MPEG-4/AAC output (`audio/mp4`) is already accepted by
+     * the gateway's attachment MIME whitelist.
+     */
+    suspend fun uploadAudioAttachment(
+        incidentId: String,
+        bytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+    ): Result<String> = uploadAttachment(incidentId, bytes, fileName, mimeType, kind = "AUDIO")
+
+    private suspend fun uploadAttachment(
+        incidentId: String,
+        bytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+        kind: String,
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
             val sha256 = java.security.MessageDigest.getInstance("SHA-256")
@@ -177,7 +239,7 @@ class GatewayClient(
                 put("mime_type", mimeType)
                 put("size_bytes", bytes.size)
                 put("sha256", sha256)
-                put("kind", "IMAGE")
+                put("kind", kind)
                 put("data_base64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
             }
             val url = URL("${cleanBaseUrl()}/v1/incidents/$incidentId/attachments")
@@ -185,6 +247,62 @@ class GatewayClient(
             Result.success(JSONObject(response).optString("id"))
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    /**
+     * A durable, listable follow-up note — typed, or transcribed voice a human
+     * reviewed and confirmed first. Mirrors the dashboard's identical endpoint.
+     */
+    suspend fun addNote(
+        incidentId: String,
+        text: String,
+        source: String,
+        audioAttachmentId: String? = null,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val json = JSONObject().apply {
+                put("text", text)
+                put("source", source)
+                put("audio_attachment_id", audioAttachmentId ?: JSONObject.NULL)
+            }
+            val url = URL("${cleanBaseUrl()}/v1/incidents/$incidentId/notes")
+            val response = postJson(url, json.toString(), apiKey)
+            Result.success(JSONObject(response).optString("id"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Realtime push: every message is `{"type": ..., "incident_id": ...}` — a
+     * signal to refetch, never a data payload — same scheme the dashboard's
+     * useIncidentSocket.ts already uses against this same endpoint. Returns
+     * null if the socket can't even be opened (e.g. malformed base URL); the
+     * caller's existing polling loop is the fallback either way.
+     */
+    fun connectRealtime(onEvent: () -> Unit, onDisconnected: () -> Unit): okhttp3.WebSocket? {
+        val wsUrl = cleanBaseUrl().replaceFirst(Regex("^http"), "ws") +
+            "/v1/ws/incidents?token=$apiKey"
+        return try {
+            val request = okhttp3.Request.Builder().url(wsUrl).build()
+            httpClient.newWebSocket(request, object : okhttp3.WebSocketListener() {
+                override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+                    onEvent()
+                }
+                override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+                    onDisconnected()
+                }
+                override fun onFailure(
+                    webSocket: okhttp3.WebSocket,
+                    t: Throwable,
+                    response: okhttp3.Response?,
+                ) {
+                    onDisconnected()
+                }
+            })
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -332,6 +450,15 @@ class GatewayClient(
             Instant.now()
         }
 
+        val attArr = json.optJSONArray("attachment_ids")
+        val attIds = mutableListOf<String>()
+        if (attArr != null) {
+            for (i in 0 until attArr.length()) {
+                val aId = attArr.optString(i)
+                if (aId.isNotBlank()) attIds.add(aId)
+            }
+        }
+
         return Incident(
             id = id,
             sourceNodeId = json.optString("source_node_id", "gateway"),
@@ -347,6 +474,7 @@ class GatewayClient(
             status = status,
             verificationStatus = VerificationStatus.AI_CLASSIFIED,
             peopleAffected = Quantity(value = peopleVal, raw = peopleRaw),
+            attachmentIds = attIds,
         )
     }
 

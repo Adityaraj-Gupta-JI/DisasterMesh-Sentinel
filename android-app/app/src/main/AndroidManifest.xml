@@ -20,6 +20,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Live voice recording for reports and coordinator notes (Feature: Live
+         Voice Recording) — requested at runtime, lazily, only on first tap of a
+         record button, not bundled into the startup mesh-permission batch. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
         android:name=".SentinelApplication"

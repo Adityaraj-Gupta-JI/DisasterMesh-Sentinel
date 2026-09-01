@@ -1,10 +1,9 @@
 /**
- * Live multi-hop mesh view.
+ * Live multi-hop mesh view — Spider/Web spatial environment.
  *
- * Polls the gateway for a simulation run's event stream and folds it into a picture:
- * nodes as circles, links as lines, and a packet that travels edge-by-edge as the
- * report hops toward the coordinator. Nothing here computes routing — it only renders
- * the events the simulator already produced, the same stream the terminal view reads.
+ * Node shapes encode role visually: circle = reporter, square = relay,
+ * diamond = coordinator. All simulation logic is preserved from the original.
+ * Edge styles: solid healthy, dashed degraded (liveHop strands).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -16,10 +15,91 @@ const HOP_FLASH_MS = 1400;
 
 type Roleish = string;
 
+/** Colour by role — same as original, matches CSS tokens */
 function roleColor(role: Roleish): string {
-  if (role === "CITIZEN_REPORTER") return "#f59e0b";
-  if (role === "EVENT_COORDINATOR") return "#22c55e";
-  return "#60a5fa"; // relays and everyone else
+  if (role === "CITIZEN_REPORTER") return "#d97e28";    // --p1 amber
+  if (role === "EVENT_COORDINATOR") return "#1e8f57";   // --ok green
+  return "#2b7dd4";                                      // --p2 mesh blue (relays)
+}
+
+/** Node shape by role — the Spider/Web identity visual */
+function NodeShape({
+  cx,
+  cy,
+  role,
+  isActive,
+  isDelivered,
+}: {
+  cx: number;
+  cy: number;
+  role: Roleish;
+  isActive: boolean;
+  isDelivered: boolean;
+}) {
+  const color = roleColor(role);
+  const glowColor = isDelivered ? "#1e8f57" : isActive ? color : "transparent";
+  const strokeColor = isDelivered ? "#1e8f57" : "rgba(255,255,255,0.12)";
+
+  // Halo ring for active/delivered nodes
+  const halo = (isActive || isDelivered) && (
+    <circle cx={cx} cy={cy} r={18} fill={color} opacity={0.12} />
+  );
+
+  if (role === "CITIZEN_REPORTER") {
+    // Circle — reporters
+    return (
+      <g>
+        {halo}
+        {glowColor !== "transparent" && (
+          <circle cx={cx} cy={cy} r={14} fill={glowColor} opacity={0.08} />
+        )}
+        <circle
+          cx={cx} cy={cy} r={9}
+          fill={color}
+          stroke={strokeColor}
+          strokeWidth={isDelivered ? 2.5 : 1.5}
+        />
+      </g>
+    );
+  }
+
+  if (role === "EVENT_COORDINATOR") {
+    // Diamond — coordinator (the centre of the web)
+    const s = 10;
+    return (
+      <g>
+        {halo}
+        {glowColor !== "transparent" && (
+          <circle cx={cx} cy={cy} r={16} fill={glowColor} opacity={0.10} />
+        )}
+        <polygon
+          points={`${cx},${cy - s} ${cx + s},${cy} ${cx},${cy + s} ${cx - s},${cy}`}
+          fill={color}
+          stroke={strokeColor}
+          strokeWidth={isDelivered ? 2 : 1.5}
+        />
+      </g>
+    );
+  }
+
+  // Square — relay nodes
+  const s = 7;
+  return (
+    <g>
+      {halo}
+      {glowColor !== "transparent" && (
+        <circle cx={cx} cy={cy} r={14} fill={glowColor} opacity={0.08} />
+      )}
+      <rect
+        x={cx - s} y={cy - s}
+        width={s * 2} height={s * 2}
+        fill={color}
+        stroke={strokeColor}
+        strokeWidth={isDelivered ? 2 : 1.5}
+        rx={1}
+      />
+    </g>
+  );
 }
 
 interface Hop {
@@ -40,7 +120,6 @@ export function MeshView() {
   const [form, setForm] = useState({ topology: "chain", nodes: 6 });
   const [now, setNow] = useState(Date.now());
 
-  // Adopt the latest run on mount so a run started from the terminal shows up.
   useEffect(() => {
     let cancelled = false;
     api.getMeshLatest().then((s) => {
@@ -49,12 +128,9 @@ export function MeshView() {
       if (s.topology) setTopology(s.topology);
       setSinceSeq(-1);
     });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
-  // A light clock so hop flashes fade even between event polls.
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 120);
     return () => clearInterval(id);
@@ -64,9 +140,7 @@ export function MeshView() {
     if (events.length === 0) return;
     const newHops: Hop[] = [];
     for (const e of events) {
-      if (e.type === "node_added" || e.type === "link_up") {
-        // topology already carried via the run summary; ignore here
-      } else if (e.type === "hop" && e.from_node && e.to_node) {
+      if (e.type === "hop" && e.from_node && e.to_node) {
         newHops.push({ key: `${e.seq}`, from: e.from_node, to: e.to_node, at: Date.now() });
       } else if (e.type === "delivered" && e.to_node) {
         setDelivered((prev) => new Set(prev).add(e.to_node!));
@@ -85,13 +159,10 @@ export function MeshView() {
   useEffect(() => {
     if (!events.data) return;
     applyEvents(events.data.events);
-    if (events.data.events.length) {
-      setSinceSeq(events.data.latest_seq);
-    }
+    if (events.data.events.length) setSinceSeq(events.data.latest_seq);
     if (events.data.metrics) setMetrics(events.data.metrics);
   }, [events.data, applyEvents]);
 
-  // Drop hop flashes once they have faded.
   const liveHops = useMemo(
     () => activeHops.filter((h) => now - h.at < HOP_FLASH_MS),
     [activeHops, now],
@@ -119,9 +190,22 @@ export function MeshView() {
 
   return (
     <div className="mesh-view">
+      {/* Controls bar */}
       <div className="mesh-controls">
+        <div className="mesh-controls-left">
+          <span className="mesh-controls-title">LIVE MESH</span>
+          {runId && (
+            <span className="mesh-controls-sub">
+              run <code style={{ fontFamily: "var(--font-mono)", color: "var(--mesh)" }}>
+                {runId.slice(0, 12)}
+              </code>
+              {events.data?.done ? " · complete" : " · live"}
+            </span>
+          )}
+        </div>
+
         <label>
-          Topology&nbsp;
+          Topology
           <select
             value={form.topology}
             onChange={(e) => setForm((f) => ({ ...f, topology: e.target.value }))}
@@ -131,30 +215,36 @@ export function MeshView() {
             <option value="geometric">Random scatter</option>
           </select>
         </label>
+
         <label>
-          Nodes&nbsp;
+          Nodes
           <input
             type="number"
             min={2}
             max={30}
             value={form.nodes}
             onChange={(e) => setForm((f) => ({ ...f, nodes: Number(e.target.value) }))}
-            style={{ width: 60 }}
+            style={{ width: 52 }}
           />
         </label>
-        <button onClick={start} disabled={starting}>
+
+        <button
+          className="mesh-run-btn"
+          onClick={start}
+          disabled={starting}
+        >
           {starting ? "Starting…" : "▶ Run simulation"}
         </button>
-        {runId && (
-          <span className="mesh-runid">
-            run <code>{runId.slice(0, 12)}</code>
-            {events.data?.done ? " · complete" : " · live"}
-          </span>
-        )}
       </div>
 
+      {/* Canvas + metrics */}
       <div className="mesh-body">
-        <MeshCanvas topology={topology} liveHops={liveHops} delivered={delivered} now={now} />
+        <MeshCanvas
+          topology={topology}
+          liveHops={liveHops}
+          delivered={delivered}
+          now={now}
+        />
         <MeshMetricsPanel metrics={metrics} topology={topology} />
       </div>
     </div>
@@ -175,14 +265,14 @@ function MeshCanvas({
   if (!topology || topology.nodes.length === 0) {
     return (
       <div className="mesh-canvas empty">
-        <p className="empty">No run yet. Pick a topology and press “Run simulation”.</p>
+        <p className="empty">No run yet. Pick a topology and press "Run simulation".</p>
       </div>
     );
   }
 
-  const W = 640;
-  const H = 460;
-  const pad = 48;
+  const W = 680;
+  const H = 500;
+  const pad = 52;
   const xs = topology.nodes.map((n) => n.x);
   const ys = topology.nodes.map((n) => n.y);
   const minX = Math.min(...xs);
@@ -201,26 +291,70 @@ function MeshCanvas({
     active.add(h.from);
   }
 
+  // Active edges (edges touched by live hops)
+  const activeEdgeSet = new Set<string>();
+  for (const h of liveHops) {
+    activeEdgeSet.add(`${h.from}-${h.to}`);
+    activeEdgeSet.add(`${h.to}-${h.from}`);
+  }
+
   return (
-    <svg className="mesh-canvas" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="mesh topology">
+    <svg
+      className="mesh-canvas"
+      viewBox={`0 0 ${W} ${H}`}
+      role="img"
+      aria-label="mesh topology"
+    >
+      {/* Faint background web-fiber crosshatch */}
+      <defs>
+        <pattern id="webgrid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path
+            d={`M0,0 L40,40 M40,0 L0,40 M20,0 L20,40 M0,20 L40,20`}
+            stroke="rgba(43,125,212,0.06)"
+            strokeWidth="0.5"
+            fill="none"
+          />
+        </pattern>
+        {/* Glowing packet filter */}
+        <filter id="packet-glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="2.5" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        {/* Edge active glow */}
+        <filter id="edge-glow" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="1.5" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+
+      {/* Background web grid */}
+      <rect width={W} height={H} fill="url(#webgrid)" opacity="1" />
+
+      {/* Edges — spider web strands */}
       {topology.edges.map((e, i) => {
         const a = pos.get(e.a);
         const b = pos.get(e.b);
         if (!a || !b) return null;
+        const isActiveEdge = activeEdgeSet.has(`${e.a}-${e.b}`) || activeEdgeSet.has(`${e.b}-${e.a}`);
         return (
           <line
             key={i}
-            x1={a.x}
-            y1={a.y}
-            x2={b.x}
-            y2={b.y}
-            stroke="var(--border)"
-            strokeWidth={1.5}
+            x1={a.x} y1={a.y}
+            x2={b.x} y2={b.y}
+            stroke={isActiveEdge ? "rgba(43,125,212,0.65)" : "rgba(255,255,255,0.10)"}
+            strokeWidth={isActiveEdge ? 1.5 : 1}
+            filter={isActiveEdge ? "url(#edge-glow)" : undefined}
           />
         );
       })}
 
-      {/* Travelling packets: interpolate from → to over the flash window. */}
+      {/* Travelling packets — interpolate from → to */}
       {liveHops.map((h) => {
         const a = pos.get(h.from);
         const b = pos.get(h.to);
@@ -229,31 +363,32 @@ function MeshCanvas({
         const cx = a.x + (b.x - a.x) * t;
         const cy = a.y + (b.y - a.y) * t;
         return (
-          <g key={h.key}>
-            <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#f59e0b" strokeWidth={2.5} opacity={0.5} />
-            <circle cx={cx} cy={cy} r={6} fill="#fbbf24" className="mesh-packet" />
+          <g key={h.key} filter="url(#packet-glow)">
+            <circle cx={cx} cy={cy} r={5} fill="#fbbf24" />
           </g>
         );
       })}
 
+      {/* Nodes — spider web junction points */}
       {topology.nodes.map((n) => {
         const p = pos.get(n.id)!;
         const isDelivered = delivered.has(n.id);
         const isActive = active.has(n.id);
         return (
           <g key={n.id}>
-            {(isActive || isDelivered) && (
-              <circle cx={p.x} cy={p.y} r={18} fill={roleColor(n.role)} opacity={0.18} />
-            )}
-            <circle
+            <NodeShape
               cx={p.x}
               cy={p.y}
-              r={11}
-              fill={roleColor(n.role)}
-              stroke={isDelivered ? "#22c55e" : "var(--surface, #111)"}
-              strokeWidth={isDelivered ? 3 : 2}
+              role={n.role}
+              isActive={isActive}
+              isDelivered={isDelivered}
             />
-            <text x={p.x} y={p.y - 16} textAnchor="middle" className="mesh-label">
+            <text
+              x={p.x}
+              y={p.y - 18}
+              textAnchor="middle"
+              className="mesh-label"
+            >
               {n.id}
             </text>
           </g>
@@ -283,7 +418,7 @@ function MeshMetricsPanel({
     <aside className="mesh-metrics">
       <h3>{topology?.name ?? "Mesh"}</h3>
       <p className="mesh-sub">
-        {topology ? `${topology.nodes.length} nodes · ${topology.edges.length} links` : ""}
+        {topology ? `${topology.nodes.length} nodes · ${topology.edges.length} links` : "No run"}
       </p>
       <dl>
         {rows.map(([k, v]) => (
@@ -294,9 +429,18 @@ function MeshMetricsPanel({
         ))}
       </dl>
       <div className="mesh-legend">
-        <span><i style={{ background: roleColor("CITIZEN_REPORTER") }} /> Reporter</span>
-        <span><i style={{ background: roleColor("VOLUNTEER_RELAY") }} /> Relay</span>
-        <span><i style={{ background: roleColor("EVENT_COORDINATOR") }} /> Coordinator</span>
+        <span>
+          <i className="legend-circle" style={{ background: roleColor("CITIZEN_REPORTER") }} />
+          Reporter
+        </span>
+        <span>
+          <i className="legend-square" style={{ background: roleColor("VOLUNTEER_RELAY") }} />
+          Relay
+        </span>
+        <span>
+          <i className="legend-circle" style={{ background: roleColor("EVENT_COORDINATOR") }} />
+          Coordinator
+        </span>
       </div>
     </aside>
   );

@@ -1,16 +1,30 @@
-/** Incident detail: what happened, where, how many, what evidence, who acknowledged. */
+/** Incident detail: hero-first layout. Text dominant, metadata compact, AI separated. */
+import { usePrefersReducedMotion } from "../hooks/useLocalStorageState";
 import type { IncidentDetail as Detail } from "../lib/api";
 import { peopleLabel, relativeTime } from "../lib/api";
 import { AttachmentMedia } from "./AttachmentMedia";
 import { LanguageBadge, PriorityBadge, StatusBadge, VerificationBadge } from "./Badges";
+import { CoordinatorNotes } from "./CoordinatorNotes";
 
-export function IncidentDetailPanel({ detail }: { detail: Detail }) {
-  const { incident, attachments, dispatch } = detail;
+export function IncidentDetailPanel({
+  detail,
+  onNotesChanged,
+}: {
+  detail: Detail;
+  onNotesChanged?: () => void;
+}) {
+  const { incident, attachments, dispatch, notes } = detail;
   const redacted = incident.redacted ?? [];
+  const reducedMotion = usePrefersReducedMotion();
 
   return (
     <div>
-      <h2>Incident</h2>
+      {/* Kicker — incident type */}
+      <p className="detail-kicker">
+        {incident.disaster_types.join(" / ") || "UNCLASSIFIED"} · INCIDENT REPORT
+      </p>
+
+      {/* Badges */}
       <div className="detail-head">
         <PriorityBadge priority={incident.priority_class} />
         <StatusBadge status={detail.status} />
@@ -18,15 +32,19 @@ export function IncidentDetailPanel({ detail }: { detail: Detail }) {
         <LanguageBadge incident={incident} />
       </div>
 
-      <p className="original-text">{incident.original_text}</p>
+      {/* Hero text — the most important thing */}
+      <div className="original-text">
+        {incident.original_text}
+      </div>
       <p className="provenance">
-        Original report from {incident.source_node_id} · {relativeTime(incident.reported_at)}
-        {redacted.length > 0 && ` · restricted fields hidden: ${redacted.join(", ")}`}
+        Source: {incident.source_node_id} · {relativeTime(incident.reported_at)}
+        {redacted.length > 0 && ` · restricted: ${redacted.join(", ")}`}
       </p>
 
+      {/* Compact metadata strip */}
       <dl className="facts">
         <div className="fact">
-          <dt>People affected</dt>
+          <dt>People</dt>
           <dd>{peopleLabel(incident.people_affected)}</dd>
         </div>
         <div className="fact">
@@ -34,11 +52,15 @@ export function IncidentDetailPanel({ detail }: { detail: Detail }) {
           <dd>{incident.disaster_types.join(", ") || "Unclassified"}</dd>
         </div>
         <div className="fact">
+          {incident.location && <div className="fact-radar" aria-hidden="true" />}
+          {incident.location && !reducedMotion && (
+            <div className="fact-radar-sweep" aria-hidden="true" />
+          )}
           <dt>Location</dt>
           <dd>
             {incident.location
               ? `${incident.location.latitude.toFixed(4)}, ${incident.location.longitude.toFixed(4)}${
-                  incident.location.shared_precisely ? "" : " (approx.)"
+                  incident.location.shared_precisely ? "" : " (approx)"
                 }`
               : "Not shared"}
           </dd>
@@ -49,13 +71,34 @@ export function IncidentDetailPanel({ detail }: { detail: Detail }) {
         </div>
       </dl>
 
+      {/* AI Incident Intelligence */}
       <section className="section">
-        <h3>AI analysis</h3>
+        <h3>AI Incident Intelligence</h3>
         <div className="ai-panel">
-          <strong>
-            AI suggestion — urgency {incident.urgency}, severity {incident.severity}, confidence{" "}
-            {(incident.classification_confidence * 100).toFixed(0)}%
-          </strong>
+          <div className="ai-panel-head">
+            <span className="status-dot" aria-hidden="true" />
+            Classifier Active · System Suggestion
+          </div>
+
+          {incident.classification_confidence < 0.4 && (
+            <span className="low-confidence-flag">Human decision required</span>
+          )}
+
+          <dl className="ai-stats">
+            <div className="ai-stat">
+              <dt>Urgency</dt>
+              <dd>{incident.urgency}</dd>
+            </div>
+            <div className="ai-stat">
+              <dt>Severity</dt>
+              <dd>{incident.severity}</dd>
+            </div>
+            <div className={`ai-stat${incident.classification_confidence < 0.4 ? " low-confidence" : ""}`}>
+              <dt>Confidence</dt>
+              <dd>{(incident.classification_confidence * 100).toFixed(0)}%</dd>
+            </div>
+          </dl>
+
           <ul>
             {incident.priority_explanation.length > 0 ? (
               incident.priority_explanation.map((line, index) => <li key={index}>{line}</li>)
@@ -63,37 +106,90 @@ export function IncidentDetailPanel({ detail }: { detail: Detail }) {
               <li>No explanation recorded for this incident.</li>
             )}
           </ul>
+
+          <div className="decision-strip">
+            <span className="decision-ai">AI PROPOSES</span>
+            <span className="decision-sep">·</span>
+            <span className="decision-human">HUMAN DECIDES</span>
+          </div>
+
           <p className="simulated-note">
-            Generated by the classifier and the deterministic policy engine. A human decides.
+            Generated by classifier + deterministic policy engine.
           </p>
         </div>
       </section>
 
+      {/* Evidence console */}
       <section className="section">
-        <h3>Evidence</h3>
+        <h3>Evidence Console</h3>
         {attachments.length === 0 ? (
-          <p className="empty">No attachments received yet. Text arrives before media.</p>
+          <p className="empty">No evidence received — text arrives before media</p>
         ) : (
           <div className="evidence">
-            {attachments.map((file) => (
-              <AttachmentMedia key={file.id} incidentId={incident.id} file={file} />
+            {attachments.map((file, idx) => (
+              <div key={file.id} className="evidence-item">
+                <div className="evidence-item-head">
+                  <span className="evidence-id">
+                    EVIDENCE_{String(idx + 1).padStart(3, "0")}
+                  </span>
+                  {file.verified && (
+                    <span className="evidence-verified">✓ VERIFIED</span>
+                  )}
+                </div>
+                <AttachmentMedia incidentId={incident.id} file={file} />
+              </div>
             ))}
           </div>
         )}
       </section>
 
+      {/* Coordinator notes */}
+      <CoordinatorNotes
+        incidentId={incident.id}
+        notes={notes}
+        onAdded={() => onNotesChanged?.()}
+      />
+
+      {/* Dispatch timeline */}
       <section className="section">
-        <h3>Dispatch history</h3>
-        {dispatch.length === 0 ? (
-          <p className="empty">Nothing dispatched. Dispatch requires explicit confirmation.</p>
-        ) : (
-          <div className="evidence">
+        <h3>Dispatch Timeline</h3>
+        {(() => {
+          const acknowledged = [
+            "ACKNOWLEDGED", "DISPATCH_REQUESTED", "DISPATCHED", "EN_ROUTE", "ARRIVED", "RESOLVED",
+          ].includes(detail.status);
+          const dispatched = dispatch.length > 0;
+          const resolved = detail.status === "RESOLVED";
+          return (
+            <ul className="timeline">
+              <li className="timeline-node reached">Incident received</li>
+              <li className={`timeline-node ${acknowledged ? "reached" : "pending"}`}>
+                Human acknowledgement
+              </li>
+              <li className={`timeline-node ${dispatched ? "reached" : "pending"}`}>
+                Resource dispatch
+                {dispatched ? ` — ${dispatch.length} order${dispatch.length > 1 ? "s" : ""}` : ""}
+              </li>
+              <li className={`timeline-node ${resolved ? "reached" : "pending"}`}>
+                Incident resolved
+              </li>
+            </ul>
+          );
+        })()}
+
+        {dispatch.length > 0 && (
+          <div className="evidence" style={{ marginTop: "var(--s3)" }}>
             {dispatch.map((order) => (
               <div className="evidence-row" key={order.id}>
-                <span>{order.resource_id}</span>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: "11px" }}>
+                  {order.resource_id}
+                </span>
                 <StatusBadge status={order.status} />
                 <span className="badge outline">simulated</span>
-                {order.authorized_by && <span>by {order.authorized_by}</span>}
+                {order.authorized_by && (
+                  <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>
+                    by {order.authorized_by}
+                  </span>
+                )}
               </div>
             ))}
           </div>
