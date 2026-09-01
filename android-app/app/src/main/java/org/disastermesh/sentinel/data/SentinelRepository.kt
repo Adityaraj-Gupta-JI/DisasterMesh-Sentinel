@@ -66,6 +66,7 @@ class SentinelRepository(
     val isCharging = _isCharging.asStateFlow()
 
     private var activeTransport: Transport? = null
+    private val connectedEndpoints = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     val allIncidents: Flow<List<Incident>> = database.incidents().observeQueue().map { list ->
         list.map { it.toDomain() }
@@ -82,6 +83,18 @@ class SentinelRepository(
                 kotlinx.coroutines.delay(10_000)
             }
         }
+    }
+
+    /**
+     * Remember the gateway URL across restarts. Without this, every relaunch falls
+     * back to the emulator-only default and a real phone silently stops reaching the
+     * gateway (and so the dashboard) until someone re-opens Settings and retypes it.
+     */
+    fun persistGatewayUrl(url: String) {
+        context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            ?.edit()
+            ?.putString(KEY_GATEWAY_URL, url)
+            ?.apply()
     }
 
     fun refreshTelemetry() {
@@ -106,19 +119,6 @@ class SentinelRepository(
                 nearbyPeers = _nearbyPeersCount.value,
                 storedBundles = bundleCount,
             )
-            // Push queued incidents if any exist
-            try {
-                val queuedEntities = database.incidents().byStatus(IncidentStatus.QUEUED.name)
-                if (queuedEntities.isNotEmpty()) {
-                    val pushRes = gatewayClient.pushSync(nodeId, queuedEntities.map { it.toDomain() })
-                    if (pushRes.isSuccess) {
-                        queuedEntities.forEach { entity ->
-                            val updated = entity.copy(status = IncidentStatus.RECEIVED.name, updatedAt = Instant.now().toEpochMilli())
-                            database.incidents().upsert(updated)
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
         }
         return online
     }
@@ -291,24 +291,7 @@ class SentinelRepository(
         var pushed = 0
         var pulled = 0
 
-        // 1. Push all queued local incidents
-        try {
-            val queuedEntities = database.incidents().byStatus(IncidentStatus.QUEUED.name)
-            val queuedIncidents = queuedEntities.map { it.toDomain() }
-            if (queuedIncidents.isNotEmpty()) {
-                val pushRes = gatewayClient.pushSync(nodeId, queuedIncidents)
-                if (pushRes.isSuccess) {
-                    val (accepted, dedup) = pushRes.getOrDefault(Pair(0, 0))
-                    pushed = accepted + dedup
-                    queuedEntities.forEach { entity ->
-                        val updated = entity.copy(status = IncidentStatus.RECEIVED.name, updatedAt = Instant.now().toEpochMilli())
-                        database.incidents().upsert(updated)
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-
-        // 2. Pull remote incidents from Gateway
+        // Pull remote incidents from Gateway
         try {
             val remote = gatewayClient.pullSync()
             if (remote.isSuccess) {
@@ -324,6 +307,8 @@ class SentinelRepository(
     fun attachTransport(transport: Transport) {
         activeTransport = transport
         _relayActive.value = true
+        connectedEndpoints.clear()
+        _nearbyPeersCount.value = 0
         transport.startAdvertising(mapOf("role" to role.name))
         transport.startDiscovery()
 
@@ -331,15 +316,23 @@ class SentinelRepository(
             transport.events.collect { event ->
                 when (event) {
                     is TransportEvent.PeerDiscovered -> {
-                        _nearbyPeersCount.value = _nearbyPeersCount.value + 1
+                        // Discovery only finds a candidate; it is not yet a usable
+                        // peer, so the count shown to the user is driven off the
+                        // connection lifecycle (Connected/Disconnected) below, not
+                        // off noisy, repeating discovery signals.
                         transport.requestConnection(event.peer.endpointId)
                     }
-                    is TransportEvent.PeerLost -> {
-                        _nearbyPeersCount.value = maxOf(0, _nearbyPeersCount.value - 1)
-                    }
                     is TransportEvent.Connected -> {
+                        if (connectedEndpoints.add(event.peer.endpointId)) {
+                            _nearbyPeersCount.value = connectedEndpoints.size
+                        }
                         // Push carried bundles to new peer
                         syncBundlesWithPeer(event.peer.endpointId, transport)
+                    }
+                    is TransportEvent.Disconnected -> {
+                        if (connectedEndpoints.remove(event.endpointId)) {
+                            _nearbyPeersCount.value = connectedEndpoints.size
+                        }
                     }
                     is TransportEvent.PayloadReceived -> {
                         if (event.bytes != null) {
@@ -357,6 +350,7 @@ class SentinelRepository(
         activeTransport?.stopDiscovery()
         activeTransport = null
         _relayActive.value = false
+        connectedEndpoints.clear()
         _nearbyPeersCount.value = 0
     }
 
@@ -371,7 +365,14 @@ class SentinelRepository(
     }
 
     private fun broadcastBundle(bundle: BundleEntity, transport: Transport) {
-        // Will be delivered when connected endpoints exist
+        // A peer that connects later gets this bundle from syncBundlesWithPeer, but a
+        // peer already connected right now would otherwise never see it until the
+        // next connection event — send it immediately to everyone already linked.
+        connectedEndpoints.forEach { endpointId ->
+            try {
+                transport.sendBytes(endpointId, bundle.wire)
+            } catch (_: Exception) {}
+        }
     }
 
     private suspend fun handleIncomingWirePayload(bytes: ByteArray, senderNodeId: String) {
@@ -400,6 +401,9 @@ class SentinelRepository(
     }
 
     companion object {
+        const val PREFS_NAME = "dms_prefs"
+        const val KEY_GATEWAY_URL = "gateway_url"
+
         fun Incident.toEntity(): IncidentEntity {
             return IncidentEntity(
                 id = id,
