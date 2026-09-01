@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -55,14 +55,16 @@ from .schemas import (  # noqa: E402
     AcknowledgeRequest,
     AlertCreate,
     AttachmentCreate,
+    ComposeRequest,
     DispatchAdvance,
     DispatchCreate,
     IncidentCreate,
+    NodeHeartbeat,
     Page,
     ResourceCreate,
     StatusUpdate,
     SyncPush,
-    NodeHeartbeat,
+    TranscribeRequest,
 )
 from .security import Principal, audit, current_principal, require  # noqa: E402
 
@@ -92,6 +94,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+from .mesh import router as mesh_router  # noqa: E402
+
+app.include_router(mesh_router)
 
 
 def _seed_demo_resources() -> None:
@@ -506,6 +513,142 @@ def create_incident(
     return response
 
 
+def _classify_text(text: str, language: str | None) -> dict:
+    """Run the same triage + priority engine a reporting node runs.
+
+    Mirrors ``MeshNode.report_incident`` using the identical pure functions, so a
+    message typed or transcribed on the dashboard is classified exactly like one
+    created on a device. Returns fields ready for :class:`IncidentCreate`.
+    """
+    from dms.ai.lexicon import detect_language
+    from dms.ai.rules import extract_entities, triage
+    from dms.domain.models import Condition, ConditionType, Quantity
+    from dms.priority.engine import PriorityInputs, evaluate
+
+    lang = language or detect_language(text)
+    tri = triage(text, lang)
+    entity = extract_entities(text, lang)
+    people = entity.people_affected
+    conditions = tuple(
+        Condition(
+            type=ConditionType(c["type"]), raw=c.get("raw"), confidence=c.get("confidence")
+        )
+        for c in entity.conditions
+    )
+    decision = evaluate(
+        PriorityInputs(
+            urgency=tri.urgency,
+            severity=tri.severity,
+            disaster_types=tri.disaster_types,
+            confidence=tri.confidence,
+            people_affected=Quantity(
+                value=people.get("value"),
+                raw=people.get("raw"),
+                approximate=people.get("approximate", False),
+                confidence=people.get("confidence"),
+            ),
+            conditions=conditions,
+            hazards=entity.hazards,
+            message_age_seconds=0.0,
+            ai_available=True,
+        )
+    )
+    return {
+        "language": lang,
+        "urgency": tri.urgency.value if hasattr(tri.urgency, "value") else str(tri.urgency),
+        "severity": int(tri.severity),
+        "disaster_types": [
+            d.value if hasattr(d, "value") else str(d) for d in tri.disaster_types
+        ],
+        "priority_class": decision.priority_class,
+        "priority_score": int(decision.score),
+        "priority_explanation": list(decision.explanation),
+        "people_affected": {
+            "value": people.get("value"),
+            "raw": people.get("raw"),
+            "approximate": people.get("approximate", False),
+            "confidence": people.get("confidence"),
+        },
+        "conditions": [
+            {"type": c["type"], "raw": c.get("raw"), "confidence": c.get("confidence")}
+            for c in entity.conditions
+        ],
+    }
+
+
+@app.post("/v1/transcribe", status_code=200, tags=["ai"])
+def transcribe_audio(
+    payload: TranscribeRequest,
+    principal: Principal = Depends(require(Permission.CREATE_INCIDENT)),
+) -> dict:
+    """Audio → text, using the existing speech-to-text pipeline. Nothing is stored;
+    the caller sends the returned text through the normal incident flow."""
+    import base64 as _base64
+
+    from dms.ai.base import AIError
+    from dms.ai.mocks import transcribe as _transcribe
+
+    try:
+        audio = _base64.b64decode(payload.audio_base64, validate=True)
+    except (ValueError, _binascii_error()):
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_base64", "detail": "audio_base64 is not valid base64"},
+        ) from None
+    try:
+        result = _transcribe(
+            audio,
+            mime_type=payload.mime_type,
+            language_hint=payload.language_hint,
+            duration_s=payload.duration_s,
+        )
+    except AIError as exc:
+        raise HTTPException(
+            status_code=422, detail={"error": exc.code, "detail": str(exc)}
+        ) from None
+    return {
+        "text": result.text,
+        "language": result.language,
+        "low_quality": result.low_quality,
+        "confidence": result.confidence,
+    }
+
+
+@app.post("/v1/compose", status_code=201, tags=["incidents"])
+def compose_incident(
+    payload: ComposeRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    principal: Principal = Depends(require(Permission.CREATE_INCIDENT)),
+    db: Session = Depends(get_session),
+) -> dict:
+    """Classify free text and file it as an incident through the normal pipeline.
+
+    The dashboard uses this for typed reports and for text produced by
+    :func:`transcribe_audio`, so a transcribed voice message becomes an ordinary
+    incident — same storage, clustering, dispatch, and display as any other.
+    """
+    classified = _classify_text(payload.text, payload.source_language)
+    incident = IncidentCreate(
+        source_node_id=payload.source_node_id,
+        original_text=payload.text,
+        source_language=classified["language"],
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        disaster_types=classified["disaster_types"],
+        urgency=classified["urgency"],
+        severity=classified["severity"],
+        priority_class=classified["priority_class"],
+        priority_score=classified["priority_score"],
+        people_affected=classified["people_affected"],
+        conditions=classified["conditions"],
+        priority_explanation=classified["priority_explanation"],
+    )
+    # Reuse the existing create path verbatim — no duplicated persistence logic.
+    return create_incident(
+        payload=incident, idempotency_key=idempotency_key, principal=principal, db=db
+    )
+
+
 @app.get("/v1/incidents", tags=["incidents"])
 def list_incidents(
     priority: PriorityClass | None = None,
@@ -559,6 +702,8 @@ def get_incident(
                 "size_bytes": a.size_bytes,
                 "sha256": a.sha256,
                 "verified": a.verified,
+                "kind": a.kind,
+                "has_content": a.data is not None,
             }
             for a in attachments
         ],
@@ -664,6 +809,39 @@ def add_attachment(
     attachment_id = payload.id or new_id("att")
     if db.query(AttachmentRow).filter(AttachmentRow.id == attachment_id).first():
         return {"id": attachment_id, "deduplicated": True}
+
+    # Optional inline bytes: verify size and hash before we ever trust them, then
+    # store them so the dashboard can render the file. When absent, this whole block
+    # is skipped and the row stays metadata-only, exactly as before.
+    import base64 as _base64
+    import hashlib as _hashlib
+
+    data: bytes | None = None
+    verified = payload.verified
+    if payload.data_base64 is not None:
+        try:
+            data = _base64.b64decode(payload.data_base64, validate=True)
+        except (ValueError, _binascii_error()):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "invalid_base64", "detail": "data_base64 is not valid base64"},
+            ) from None
+        if len(data) > settings.max_upload_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail={
+                    "error": "payload_too_large",
+                    "detail": f"attachment exceeds {settings.max_upload_bytes} bytes",
+                },
+            )
+        if _hashlib.sha256(data).hexdigest() != payload.sha256:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "hash_mismatch", "detail": "sha256 does not match the bytes"},
+            )
+        # Hash matched the declared digest — the file is intact.
+        verified = True
+
     db.add(
         AttachmentRow(
             id=attachment_id,
@@ -674,7 +852,8 @@ def add_attachment(
             size_bytes=payload.size_bytes,
             sha256=payload.sha256,
             kind=payload.kind.value,
-            verified=payload.verified,
+            verified=verified,
+            data=data,
         )
     )
     audit(
@@ -685,7 +864,47 @@ def add_attachment(
         detail={"attachment_id": attachment_id, "sha256": payload.sha256[:12]},
     )
     db.commit()
-    return {"id": attachment_id, "deduplicated": False}
+    return {"id": attachment_id, "deduplicated": False, "has_content": data is not None}
+
+
+def _binascii_error() -> type[Exception]:
+    import binascii
+
+    return binascii.Error
+
+
+@app.get("/v1/incidents/{incident_id}/attachments/{attachment_id}/content", tags=["attachments"])
+def get_attachment_content(
+    incident_id: str,
+    attachment_id: str,
+    principal: Principal = Depends(require(Permission.VIEW_INCIDENT)),
+    db: Session = Depends(get_session),
+) -> Response:
+    """Serve the raw bytes of an attachment so the dashboard can render it.
+
+    Organization-scoped like every other read. Returns 404 when the attachment
+    carries only metadata (no bytes were stored), which is a valid state.
+    """
+    _scoped_incident(db, incident_id, principal)
+    row = (
+        db.query(AttachmentRow)
+        .filter(
+            AttachmentRow.id == attachment_id,
+            AttachmentRow.incident_id == incident_id,
+            AttachmentRow.organization_id == principal.organization_id,
+        )
+        .first()
+    )
+    if row is None or row.data is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "not_found", "detail": "no stored content for this attachment"},
+        )
+    return Response(
+        content=row.data,
+        media_type=row.mime_type,
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 # ------------------------------------------------------------------ clusters

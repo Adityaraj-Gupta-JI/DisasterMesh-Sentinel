@@ -157,6 +157,62 @@ class GatewayClient(
         }
     }
 
+    /**
+     * Upload an image's bytes for an incident so the coordinator can see the actual
+     * photo. Additive: mirrors the gateway's /attachments endpoint with inline bytes,
+     * and leaves the existing text/sync paths untouched.
+     */
+    suspend fun uploadImageAttachment(
+        incidentId: String,
+        bytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val sha256 = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(bytes)
+                .joinToString("") { "%02x".format(it) }
+            val json = JSONObject().apply {
+                put("file_name", fileName)
+                put("mime_type", mimeType)
+                put("size_bytes", bytes.size)
+                put("sha256", sha256)
+                put("kind", "IMAGE")
+                put("data_base64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+            }
+            val url = URL("${cleanBaseUrl()}/v1/incidents/$incidentId/attachments")
+            val response = postJson(url, json.toString(), apiKey)
+            Result.success(JSONObject(response).optString("id"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Turn recorded or selected audio into text using the gateway's speech-to-text
+     * endpoint. The caller then sends that text through the ordinary report flow.
+     */
+    suspend fun transcribeAudio(
+        bytes: ByteArray,
+        mimeType: String = "audio/ogg",
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val json = JSONObject().apply {
+                put("audio_base64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+                put("mime_type", mimeType)
+            }
+            val url = URL("${cleanBaseUrl()}/v1/transcribe")
+            val response = postJson(url, json.toString(), apiKey)
+            Result.success(JSONObject(response).optString("text"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** URL the coordinator UI loads (with the bearer header) to render an image. */
+    fun attachmentContentUrl(incidentId: String, attachmentId: String): String =
+        "${cleanBaseUrl()}/v1/incidents/$incidentId/attachments/$attachmentId/content"
+
     private fun cleanBaseUrl(): String = baseUrl.trim().removeSuffix("/")
 
     private fun postJson(url: URL, body: String, token: String): String {

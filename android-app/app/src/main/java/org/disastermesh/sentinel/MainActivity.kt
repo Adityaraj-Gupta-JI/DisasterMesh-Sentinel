@@ -133,6 +133,35 @@ private fun SentinelApp(
     var currentTab by remember { mutableStateOf(Tab.REPORT) }
     var showSettingsDialog by remember { mutableStateOf(false) }
 
+    // Feature: Image Transfer — pick a photo and upload its bytes to the last report.
+    val imagePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null) {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
+            if (bytes != null) {
+                viewModel.uploadPhotoForLastIncident(bytes, "photo", mime)
+            }
+        }
+    }
+    // Feature: Audio Transfer — pick audio, transcribe it, and pre-fill a new report.
+    var transcribedText by remember { mutableStateOf<String?>(null) }
+    val audioPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null) {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            val mime = context.contentResolver.getType(uri) ?: "audio/ogg"
+            if (bytes != null) {
+                viewModel.transcribeAudio(bytes, mime) { text ->
+                    transcribedText = text
+                    viewModel.navigateTo(AppScreen.NEW_REPORT)
+                }
+            }
+        }
+    }
+
     val currentScreen by viewModel.currentScreen.collectAsState()
     val reporterState by viewModel.reporterState.collectAsState()
     val relayState by viewModel.relayState.collectAsState()
@@ -212,6 +241,7 @@ private fun SentinelApp(
                     Tab.REPORT -> ReporterHomeScreen(
                         state = reporterState,
                         onStartReport = { viewModel.navigateTo(AppScreen.NEW_REPORT) },
+                        onSendSos = { viewModel.sendSos() },
                         onStartVoiceReport = {
                             viewModel.submitReport(
                                 text = "Voice memo incident report (auto-transcribed)",
@@ -243,10 +273,18 @@ private fun SentinelApp(
                     aiAvailable = reporterState.aiAvailable,
                     suggestion = Pair("Recommended Priority", listOf("P1 Urgent based on high impact", "Text will synchronize before attachments")),
                     submitting = false,
+                    // Feature: Audio Transfer — a voice note transcribed to text lands here
+                    // and flows through the same report path as anything typed.
+                    initialText = transcribedText.orEmpty(),
+                    onRecordVoice = { audioPicker.launch("audio/*") },
                     onSubmit = { text, disasterTypes, urgency, peopleCount, shareLocation ->
+                        transcribedText = null
                         viewModel.submitReport(text, disasterTypes, urgency, 70, peopleCount, shareLocation)
                     },
-                    onCancel = { viewModel.navigateTo(AppScreen.HOME) },
+                    onCancel = {
+                        transcribedText = null
+                        viewModel.navigateTo(AppScreen.HOME)
+                    },
                     modifier = content,
                 )
             }
@@ -255,8 +293,8 @@ private fun SentinelApp(
                     SubmissionConfirmationScreen(
                         incident = lastIncident!!,
                         onAddPhoto = {
-                            Toast.makeText(context, "Photo metadata attached to bundle", Toast.LENGTH_SHORT).show()
-                            viewModel.navigateTo(AppScreen.HOME)
+                            // Feature: Image Transfer — real photo picker instead of a stub.
+                            imagePicker.launch("image/*")
                         },
                         onDone = { viewModel.navigateTo(AppScreen.HOME) },
                         modifier = content,
@@ -274,6 +312,11 @@ private fun SentinelApp(
                         onDispatch = { resourceId, reason -> viewModel.dispatchSelected(resourceId, reason) },
                         onBack = { viewModel.navigateTo(AppScreen.HOME) },
                         modifier = content,
+                        // Feature: Image Transfer — render actual photo evidence.
+                        imageUrlFor = { attId ->
+                            viewModel.attachmentContentUrl(selectedIncident!!.id, attId)
+                        },
+                        authHeader = "Bearer ${viewModel.gatewayApiKey()}",
                     )
                 } else {
                     viewModel.navigateTo(AppScreen.HOME)

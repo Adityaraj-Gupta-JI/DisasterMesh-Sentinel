@@ -8,9 +8,11 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ActionPanel } from "./components/ActionPanel";
+import { ComposePanel } from "./components/ComposePanel";
 import { IncidentDetailPanel } from "./components/IncidentDetail";
 import { IncidentQueue } from "./components/IncidentQueue";
 import { MeshSimulation } from "./components/MeshSimulation";
+import { MeshView } from "./components/MeshView";
 import { ApiError, api, type PriorityClass } from "./lib/api";
 
 const REFRESH_MS = 5000;
@@ -19,6 +21,7 @@ function CommandInbox() {
   const [filter, setFilter] = useState<PriorityClass | "ALL">("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showNodesModal, setShowNodesModal] = useState(false);
+  const [view, setView] = useState<"inbox" | "mesh" | "report">("inbox");
   const queryClient = useQueryClient();
 
   const incidents = useQuery({
@@ -94,7 +97,33 @@ function CommandInbox() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>DisasterMesh Sentinel — Command Inbox</h1>
+        <h1>DisasterMesh Sentinel — {view === "inbox" ? "Command Inbox" : "Live Mesh"}</h1>
+        <div className="view-toggle" role="tablist">
+          <button
+            role="tab"
+            aria-selected={view === "inbox"}
+            className={view === "inbox" ? "active" : ""}
+            onClick={() => setView("inbox")}
+          >
+            Inbox
+          </button>
+          <button
+            role="tab"
+            aria-selected={view === "mesh"}
+            className={view === "mesh" ? "active" : ""}
+            onClick={() => setView("mesh")}
+          >
+            Mesh
+          </button>
+          <button
+            role="tab"
+            aria-selected={view === "report"}
+            className={view === "report" ? "active" : ""}
+            onClick={() => setView("report")}
+          >
+            Report
+          </button>
+        </div>
         <div className="spacer" />
         <div className="counters">
           <span className="urgent">
@@ -147,6 +176,18 @@ function CommandInbox() {
         </div>
       )}
 
+      {view === "mesh" && <MeshView />}
+
+      {view === "report" && (
+        <ComposePanel
+          onSent={() => {
+            invalidate();
+            setView("inbox");
+          }}
+        />
+      )}
+
+      {view === "inbox" && (
       <div className="columns">
         <div className="column">
           {incidents.isLoading ? (
@@ -192,6 +233,7 @@ function CommandInbox() {
           {acknowledge.error && <p className="error">{(acknowledge.error as Error).message}</p>}
         </div>
       </div>
+      )}
 
       {showNodesModal && (
         <div className="nodes-modal-overlay" onClick={() => setShowNodesModal(false)}>

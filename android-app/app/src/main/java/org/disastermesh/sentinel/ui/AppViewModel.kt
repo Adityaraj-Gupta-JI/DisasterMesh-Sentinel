@@ -164,6 +164,44 @@ class AppViewModel(
         }
     }
 
+    /**
+     * Upload a photo's bytes for the incident the reporter just submitted, so the
+     * coordinator can see the actual image. Additive — the text report has already
+     * been filed and is unaffected.
+     */
+    fun uploadPhotoForLastIncident(bytes: ByteArray, fileName: String, mimeType: String) {
+        val incident = _lastSubmittedIncident.value ?: return
+        viewModelScope.launch {
+            val result = repository.gatewayClient.uploadImageAttachment(
+                incident.id, bytes, fileName, mimeType,
+            )
+            _statusMessage.value =
+                if (result.isSuccess) "Photo attached to report" else "Photo will sync when online"
+        }
+    }
+
+    /**
+     * Transcribe audio to text through the gateway, then hand the text back so the
+     * caller can send it as an ordinary report. Audio → speech-to-text → text flow.
+     */
+    fun transcribeAudio(bytes: ByteArray, mimeType: String, onText: (String) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.gatewayClient.transcribeAudio(bytes, mimeType)
+            val text = result.getOrNull().orEmpty()
+            if (text.isBlank()) {
+                _statusMessage.value = "Could not transcribe audio — please type the report"
+            } else {
+                onText(text)
+            }
+        }
+    }
+
+    /** Content URL and key so the coordinator UI can render image evidence. */
+    fun attachmentContentUrl(incidentId: String, attachmentId: String): String =
+        repository.gatewayClient.attachmentContentUrl(incidentId, attachmentId)
+
+    fun gatewayApiKey(): String = repository.gatewayClient.apiKey
+
     fun acknowledgeSelected(note: String? = null) {
         val id = _selectedIncidentId.value ?: return
         viewModelScope.launch {
@@ -203,6 +241,7 @@ class AppViewModel(
     fun updateServerUrl(url: String) {
         _serverUrl.value = url
         repository.gatewayClient.baseUrl = url
+        repository.persistGatewayUrl(url)
         viewModelScope.launch {
             val ok = repository.checkConnection()
             _statusMessage.value = if (ok) "Connected to Gateway ($url)" else "Gateway unreachable ($url)"

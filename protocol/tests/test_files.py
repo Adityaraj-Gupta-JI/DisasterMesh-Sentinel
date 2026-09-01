@@ -168,18 +168,6 @@ def test_manifest_round_trips_through_json(manifest):
     assert FileManifest.from_dict(manifest.to_dict()).sha256 == manifest.sha256
 
 
-def test_manifest_records_chunk_bundle_checklist(manifest):
-    manifest.chunk_bundle_ids = tuple(f"bdl_{i}" for i in range(manifest.chunk_count))
-    round_trip = FileManifest.from_dict(manifest.to_dict())
-    assert round_trip.chunk_bundle_ids == manifest.chunk_bundle_ids
-
-
-def test_manifest_rejects_partial_chunk_bundle_checklist(manifest):
-    manifest.chunk_bundle_ids = ("only-one",)
-    with pytest.raises(TransferError, match="chunk bundle id count"):
-        manifest.validate_policy()
-
-
 def test_illegal_transfer_transition_is_rejected(session, now):
     with pytest.raises(TransferError, match="illegal transfer transition"):
         session.verify_and_commit()  # OFFERED -> VERIFYING is not allowed

@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -116,6 +118,10 @@ fun IncidentDetailScreen(
     onDispatch: (resourceId: String, reason: String) -> Unit,
     onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
+    // Additive: when provided, image evidence renders as the actual photo instead of
+    // just a count. Defaults keep every existing caller working unchanged.
+    imageUrlFor: ((attachmentId: String) -> String)? = null,
+    authHeader: String? = null,
 ) {
     var pending by remember { mutableStateOf<ResourceOption?>(null) }
     val acknowledged = incident.status in setOf(
