@@ -1,0 +1,9 @@
+# Default owners
+* @[GITHUB_USERNAME]
+
+# Security-sensitive areas
+/apps/api/src/auth/ @[Baehtar]
+/apps/api/src/relay/ @[2raised22is743]
+/apps/api/src/sync/ @[Chetanchaudhary08]
+/.github/workflows/ @[Adityaraj-Gupta-JI]
+/infrastructure/ @[Adityaraj-Gupta-JI]
