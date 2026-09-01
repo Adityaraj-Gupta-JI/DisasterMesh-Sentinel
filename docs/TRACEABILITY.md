@@ -12,7 +12,7 @@ Legend: **VERIFIED** (automated test passes) · **MANUAL** (documented manual ru
 |---|---|---|---|---|
 | R1 | Offline operation with no Internet | `dms/node.py`, `dms/transport/mock.py` | `test_10_the_whole_flow_ran_with_no_internet` | VERIFIED |
 | R2 | P0 text is never blocked by media | `dms/sync/scheduler.py` sort key | `test_p0_text_beats_p0_image`, `test_text_arrives_before_the_image`, `test_property_p0_text_is_always_schedulable_under_media_load` | VERIFIED |
-| R3 | Resumable, verified file transfer | `dms/files/transfer.py` | `test_interrupted_transfer_resumes_from_missing_chunks`, `test_hash_mismatch_never_commits` | VERIFIED |
+| R3 | Resumable, verified file transfer | `dms/files/transfer.py`, `dms/node.py` | `test_interrupted_transfer_resumes_from_missing_chunks`, `test_hash_mismatch_never_commits`, `test_media_multihop_uses_destination_chunk_inventory`, `test_chunks_received_before_manifest_are_replayed_from_storage` | VERIFIED |
 | R4 | Duplicate handling is idempotent | store dedup + `Bundle` id | `test_duplicate_transfer_is_idempotent`, `test_repeated_acknowledgement_is_absorbed` | VERIFIED |
 | R5 | Incident data is encrypted | `dms/crypto/sealing.py` | `test_3_incident_is_encrypted_and_stored_locally`, `test_ciphertext_does_not_contain_plaintext` | VERIFIED |
 | R6 | Dispatch requires human confirmation | `dms/dispatch/service.py`, gateway `confirm=true` | `test_dispatch_requires_an_authorized_role`, `test_dispatch_without_confirmation_is_refused` | VERIFIED |

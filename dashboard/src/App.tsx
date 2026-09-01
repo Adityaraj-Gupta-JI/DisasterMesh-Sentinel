@@ -14,6 +14,7 @@ import { BootSequence } from "./components/BootSequence";
 import { ComposePanel } from "./components/ComposePanel";
 import { IncidentDetailPanel } from "./components/IncidentDetail";
 import { IncidentQueue } from "./components/IncidentQueue";
+import { MeshSimulation } from "./components/MeshSimulation";
 import { MeshView } from "./components/MeshView";
 import { useIncidentSocket } from "./hooks/useIncidentSocket";
 import { useLocalStorageState } from "./hooks/useLocalStorageState";
@@ -52,7 +53,7 @@ function HudTile({
   );
 }
 
-export default function App() {
+function CommandInbox() {
   const [filter, setFilter] = useState<PriorityClass | "ALL">("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showNodesModal, setShowNodesModal] = useState(false);

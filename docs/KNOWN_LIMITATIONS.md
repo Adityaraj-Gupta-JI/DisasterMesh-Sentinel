@@ -4,14 +4,16 @@ Everything this prototype cannot do, stated plainly. If a claim is not in
 [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md) with a passing test behind it, assume
 it is on this page instead.
 
-## 1. The Android app has never been compiled
+## 1. The Android app is blocked by local SDK setup
 
 16 Kotlin files (2,224 lines) exist: domain model, priority engine, Room schema,
 Nearby Connections adapter, design system, and the reporter/relay/coordinator screens.
-None of it has been through a compiler.
+The Gradle wrapper runs, but the debug APK cannot finish compiling on this machine yet.
 
-- `ANDROID_HOME` is unset and there is no Gradle wrapper on this machine.
-- The installed JDK is 25, newer than current AGP officially supports.
+- `ANDROID_HOME` is unset and no Android SDK was found in the usual user, Program Files,
+  or project locations.
+- The default `java` on PATH is Java 8, which is too old for the Android Gradle Plugin.
+  IntelliJ's bundled JDK is new enough to pass that stage.
 - **No radio test has been run between two physical devices.** Nearby Connections
   discovery, connection, and payload behaviour are unverified in reality.
 

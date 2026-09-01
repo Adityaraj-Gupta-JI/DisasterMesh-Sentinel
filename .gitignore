@@ -53,3 +53,9 @@ simulation-output/
 .gemini/
 .DS_Store
 Thumbs.db
+
+# Local agent instructions
+CLAUDE.md
+AGENTS.md
+.claude/
+.codex/
