@@ -1204,7 +1204,7 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: 700; letter-spacing:
 
 .ai-stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: var(--s3);
   margin-bottom: var(--s3);
   padding-bottom: var(--s3);

@@ -110,10 +110,6 @@ export function IncidentDetailPanel({
               <dt>Severity</dt>
               <dd>{incident.severity}</dd>
             </div>
-            <div className={`ai-stat${incident.classification_confidence < 0.4 ? " low-confidence" : ""}`}>
-              <dt>Confidence</dt>
-              <dd>{(incident.classification_confidence * 100).toFixed(0)}%</dd>
-            </div>
           </dl>
 
           <ul>
